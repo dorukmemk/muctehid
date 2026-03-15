@@ -1,10 +1,10 @@
 {
-  "name": "code-audit-mcp",
+  "name": "muctehid-mcp",
   "version": "1.0.0",
-  "description": "Autonomous MCP server for code auditing — hybrid BM25+vector memory, skills system, OWASP security scanning. Zero Python, zero cloud API.",
+  "description": "Otonom MCP server — hybrid BM25+vector memory, OWASP güvenlik taraması, skills sistemi. Sıfır Python, sıfır cloud API.",
   "main": "dist/index.js",
   "bin": {
-    "code-audit-mcp": "dist/index.js"
+    "muctehid-mcp": "dist/index.js"
   },
   "scripts": {
     "build": "tsc",
