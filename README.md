@@ -13,14 +13,19 @@
 - 🕵️ **Secret Detection** — AWS, GitHub, Stripe, JWT, SSH key tespiti (regex + entropy)
 - 📊 **Health Score** — 0-100 ağırlıklı skor (security, quality, docs, tests, deps)
 - 🎯 **Skills Sistemi** — 16 built-in skill, özel skill kurulabilir
+- 🤖 **Orchestrator** — complexity detection, otomatik skill seçimi, adım adım plan
+- 📋 **Spec Mode** — Kiro-benzeri requirements → design → tasks workflow
+- ✅ **Task Sistemi** — SQLite-backed, dependency graph, critical path
+- 🔬 **Research Engine** — anti-hallüsinasyon guard, claim verification
 - 🔧 **Git Entegrasyonu** — diff audit, blame context, pre-commit hook
-- 📦 **Plugin Ekosistemi** — npm-style extensibility
 - 🖥️ **Cross-platform** — Windows / Mac / Linux
 - ☁️ **Tamamen local** — API key yok, cloud yok, telemetry yok
 
+---
+
 ## Kurulum
 
-### Submodule olarak ekle
+### 1. Submodule olarak ekle
 
 ```bash
 git submodule add https://github.com/dorukmemk/muctehid .mcp/muctehid
@@ -29,9 +34,153 @@ npm install
 npm run build
 ```
 
-### IDE konfigürasyonu
+> **Not:** `dist/` klasörü `.gitignore`'da olduğu için her klonlamadan sonra `npm run build` gerekir. İlk kurulumda `npm install` bağımlılıkları indirir (~300MB, `@xenova/transformers` ONNX modeli dahil).
 
-**Cursor / Claude Desktop** — `.cursor/mcp.json` veya `claude_desktop_config.json`:
+---
+
+## IDE Konfigürasyonu
+
+### Cursor
+
+`.cursor/mcp.json` oluştur (proje root'unda):
+
+```json
+{
+  "mcpServers": {
+    "muctehid": {
+      "command": "node",
+      "args": [".mcp/muctehid/dist/index.js"],
+      "env": {
+        "REPO_ROOT": "${workspaceFolder}",
+        "AUDIT_DATA_DIR": ".audit-data"
+      }
+    }
+  }
+}
+```
+
+Cursor'da **Settings → MCP** sekmesinden de ekleyebilirsin.
+
+---
+
+### Claude Desktop
+
+`~/.config/claude/claude_desktop_config.json` (Mac/Linux) veya `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+```json
+{
+  "mcpServers": {
+    "muctehid": {
+      "command": "node",
+      "args": ["C:/Projects/myrepo/.mcp/muctehid/dist/index.js"],
+      "env": {
+        "REPO_ROOT": "C:/Projects/myrepo",
+        "AUDIT_DATA_DIR": "C:/Projects/myrepo/.audit-data"
+      }
+    }
+  }
+}
+```
+
+---
+
+### Kiro (AWS AI IDE) — Tam Kurulum + AutoApprove
+
+Kiro, MCP server'ları `.kiro/settings/mcp.json` dosyasıyla yönetir.
+
+**Adım 1 — `.kiro/settings/mcp.json` oluştur:**
+
+```json
+{
+  "mcpServers": {
+    "muctehid": {
+      "command": "node",
+      "args": [".mcp/muctehid/dist/index.js"],
+      "env": {
+        "REPO_ROOT": "${workspaceFolder}",
+        "AUDIT_DATA_DIR": "${workspaceFolder}/.audit-data"
+      },
+      "autoApprove": [
+        "index_codebase",
+        "search_code",
+        "add_memory",
+        "get_context",
+        "memory_stats",
+        "clear_memory",
+        "audit_file",
+        "audit_diff",
+        "security_scan",
+        "find_secrets",
+        "find_todos",
+        "complexity_score",
+        "dependency_audit",
+        "health_score",
+        "list_skills",
+        "run_skill",
+        "install_skill",
+        "remove_skill",
+        "skill_info",
+        "create_skill",
+        "git_diff_audit",
+        "git_blame_context",
+        "pre_commit_check",
+        "commit_history_search",
+        "install_hooks",
+        "generate_report",
+        "export_report",
+        "compare_reports",
+        "find_references",
+        "get_dependencies",
+        "analyze_complexity",
+        "route_task",
+        "suggest_skill",
+        "spec_init",
+        "spec_list",
+        "spec_get",
+        "spec_update_status",
+        "spec_generate",
+        "task_create",
+        "task_list",
+        "task_get",
+        "task_update",
+        "task_delete",
+        "task_timeline",
+        "task_next",
+        "task_progress",
+        "research_topic",
+        "verify_claim",
+        "template_list",
+        "template_render",
+        "template_save"
+      ]
+    }
+  }
+}
+```
+
+**Adım 2 — Kiro'yu yeniden başlat** (MCP server'ı yüklemesi için).
+
+**Adım 3 — Bağlantıyı doğrula:**
+Kiro'da bir chat aç ve şunu yaz:
+```
+memory_stats
+```
+`Chunks: 0 | Files: 0` gibi bir cevap geliyorsa kurulum tamam.
+
+**Adım 4 — İlk kullanım:**
+```
+index_codebase        ← tüm repoyu memory'ye al
+health_score          ← 0-100 skor
+list_skills           ← 16 skill listele
+```
+
+> **AutoApprove neden önemli?** Tüm tool'ları listeye ekleyince Kiro her araç çağrısında onay sormaz — ajan otomatik akışlarla çalışabilir.
+
+---
+
+### Claude Code (CLI)
+
+`.claude/settings.json` dosyasına ekle:
 
 ```json
 {
@@ -48,14 +197,41 @@ npm run build
 }
 ```
 
-### İlk kullanım
+Veya terminal'den direkt:
+
+```bash
+claude mcp add muctehid node .mcp/muctehid/dist/index.js \
+  --env REPO_ROOT=. \
+  --env AUDIT_DATA_DIR=.audit-data
+```
+
+---
+
+## Hızlı Başlangıç
 
 ```
-index_codebase          ← repoyu indexle
-health_score            ← 0-100 skor al
-list_skills             ← skill'leri listele
+# 1. Repoyu indexle
+index_codebase
+
+# 2. Güvenlik taraması
 run_skill("security-audit", { path: "src/" })
+
+# 3. Yeni özellik planla (Spec Mode)
+spec_init name="user-auth" description="JWT tabanlı kimlik doğrulama sistemi"
+spec_generate specId="SPEC-001_user-auth" phase="requirements"
+spec_generate specId="SPEC-001_user-auth" phase="design"
+spec_generate specId="SPEC-001_user-auth" phase="tasks"
+
+# 4. Görev yönetimi
+task_list
+task_next
+task_progress
+
+# 5. Araştırma
+research_topic topic="authentication best practices"
 ```
+
+---
 
 ## Tools (52 — v2.0.0)
 
@@ -99,8 +275,6 @@ run_skill("security-audit", { path: "src/" })
 | `template_list` | Şablonları listele |
 | `template_render` | Şablon render et |
 | `template_save` | Yeni şablon kaydet |
-
-## Tools (30 — v1)
 
 ### Memory (6)
 | Tool | Açıklama |
@@ -156,6 +330,8 @@ run_skill("security-audit", { path: "src/" })
 | `find_references` | Sembol kullanımlarını bul |
 | `get_dependencies` | Import/dependency grafiği |
 
+---
+
 ## Built-in Skills (16)
 
 | Skill | Kategori | Ne yapıyor |
@@ -177,6 +353,8 @@ run_skill("security-audit", { path: "src/" })
 | `audit-runner` | security | Tam repo denetimi |
 | `pitch-deck` | docs | Teknik sunum içeriği |
 
+---
+
 ## Health Score
 
 ```
@@ -194,6 +372,8 @@ Health Score (0-100)
 | 70-89 | Good | Bilgilendirme |
 | 50-69 | Needs Attention | Uyarı |
 | <50 | Critical | Bloklama (opsiyonel) |
+
+---
 
 ## Konfigürasyon
 
@@ -218,6 +398,8 @@ Repo root'una `.audit-config.json` ekle:
 }
 ```
 
+---
+
 ## Tech Stack
 
 | Katman | Paket | Neden |
@@ -229,6 +411,8 @@ Repo root'una `.audit-config.json` ekle:
 | Embeddings | `@xenova/transformers` | ONNX, local, API key yok |
 | Config | `zod` | schema validation |
 | Git | `simple-git` | cross-platform |
+
+---
 
 ## Plugin Sistemi
 
@@ -247,6 +431,8 @@ export default definePlugin({
   }],
 });
 ```
+
+---
 
 ## Lisans
 
