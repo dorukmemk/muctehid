@@ -1,0 +1,44 @@
+{
+  "version": "2.0",
+  "memory": {
+    "mode": "hybrid",
+    "embeddingModel": "Xenova/all-MiniLM-L6-v2",
+    "chunkSize": 150,
+    "chunkOverlap": 20,
+    "exclude": [
+      "node_modules",
+      "dist",
+      ".git",
+      "*.min.js",
+      "*.lock",
+      "*.map",
+      ".audit-data",
+      "coverage"
+    ]
+  },
+  "audit": {
+    "severity": ["critical", "high", "medium", "low"],
+    "categories": ["security", "quality", "performance", "docs"],
+    "owasp": true,
+    "secrets": true
+  },
+  "skills": {
+    "autoTrigger": true,
+    "installed": [
+      "security-audit",
+      "code-review",
+      "dependency-risk"
+    ]
+  },
+  "plugins": [],
+  "hooks": {
+    "preCommit": true,
+    "prePush": false,
+    "onSave": false
+  },
+  "report": {
+    "format": "markdown",
+    "outputDir": ".audit-data/reports",
+    "autoGenerate": false
+  }
+}
