@@ -1,6 +1,6 @@
 {
   "name": "muctehid-mcp",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "description": "Otonom MCP server — hybrid BM25+vector memory, OWASP güvenlik taraması, skills sistemi. Sıfır Python, sıfır cloud API.",
   "main": "dist/index.js",
   "bin": {

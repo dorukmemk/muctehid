@@ -1,6 +1,6 @@
 # muctehid-mcp
 
-> Herhangi bir Git reposuna submodule olarak eklenebilen, tam otonom MCP server. Hybrid BM25+vector memory, OWASP güvenlik taraması, skills sistemi. **Sıfır Python. Sıfır cloud API. Sıfır subprocess.**
+> Herhangi bir Git reposuna submodule olarak eklenebilen, tam otonom MCP server. Hybrid BM25+vector memory, OWASP güvenlik taraması, Orchestrator, Spec Mode (Kiro-benzeri), Task/Todo sistemi, Research Engine. **Sıfır Python. Sıfır cloud API. Sıfır subprocess.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Node.js](https://img.shields.io/badge/Node.js-20%2B-green.svg)](https://nodejs.org)
@@ -12,7 +12,7 @@
 - 🔒 **OWASP Top 10** — 15 pattern, fix önerileriyle birlikte
 - 🕵️ **Secret Detection** — AWS, GitHub, Stripe, JWT, SSH key tespiti (regex + entropy)
 - 📊 **Health Score** — 0-100 ağırlıklı skor (security, quality, docs, tests, deps)
-- 🎯 **Skills Sistemi** — 9 built-in skill, özel skill kurulabilir
+- 🎯 **Skills Sistemi** — 16 built-in skill, özel skill kurulabilir
 - 🔧 **Git Entegrasyonu** — diff audit, blame context, pre-commit hook
 - 📦 **Plugin Ekosistemi** — npm-style extensibility
 - 🖥️ **Cross-platform** — Windows / Mac / Linux
@@ -57,7 +57,50 @@ list_skills             ← skill'leri listele
 run_skill("security-audit", { path: "src/" })
 ```
 
-## Tools (30)
+## Tools (52 — v2.0.0)
+
+### Orchestrator (3)
+| Tool | Açıklama |
+|------|----------|
+| `analyze_complexity` | İstek karmaşıklığını analiz et (trivial→epic) |
+| `route_task` | Adım adım yürütme planı oluştur |
+| `suggest_skill` | İstek için en uygun skill öner |
+
+### Spec / Kiro-mode (5)
+| Tool | Açıklama |
+|------|----------|
+| `spec_init` | Yeni spec workflow başlat |
+| `spec_list` | Spec'leri listele |
+| `spec_get` | Spec detaylarını getir |
+| `spec_update_status` | Spec aşamasını güncelle |
+| `spec_generate` | requirements / design / tasks üret |
+
+### Tasks (8)
+| Tool | Açıklama |
+|------|----------|
+| `task_create` | Görev oluştur |
+| `task_list` | Görevleri filtrele |
+| `task_get` | Görev detayı |
+| `task_update` | Durum/öncelik güncelle |
+| `task_delete` | Görevi sil |
+| `task_timeline` | Görev zaman çizelgesi |
+| `task_next` | Sonraki yapılabilir görevler |
+| `task_progress` | İlerleme özeti + kritik yol |
+
+### Research (2)
+| Tool | Açıklama |
+|------|----------|
+| `research_topic` | Anti-hallüsinasyon araştırma |
+| `verify_claim` | İddia doğrulama |
+
+### Templates (3)
+| Tool | Açıklama |
+|------|----------|
+| `template_list` | Şablonları listele |
+| `template_render` | Şablon render et |
+| `template_save` | Yeni şablon kaydet |
+
+## Tools (30 — v1)
 
 ### Memory (6)
 | Tool | Açıklama |
@@ -113,7 +156,7 @@ run_skill("security-audit", { path: "src/" })
 | `find_references` | Sembol kullanımlarını bul |
 | `get_dependencies` | Import/dependency grafiği |
 
-## Built-in Skills (9)
+## Built-in Skills (16)
 
 | Skill | Kategori | Ne yapıyor |
 |-------|----------|------------|
@@ -126,6 +169,13 @@ run_skill("security-audit", { path: "src/" })
 | `dependency-risk` | security | Paket güvenlik analizi |
 | `license-scan` | compliance | Lisans uyumluluk kontrolü |
 | `accessibility-check` | quality | WCAG a11y pattern kontrolü |
+| `refactor-planner` | quality | Complexity analizi + refactor listesi |
+| `doc-analyzer` | docs | Dokümantasyon kapsama analizi |
+| `feature-planner` | planning | Spec mode ile özellik planı |
+| `bug-reporter` | quality | Root cause + fix önerisi |
+| `deep-dive` | quality | 360° dosya/modül analizi |
+| `audit-runner` | security | Tam repo denetimi |
+| `pitch-deck` | docs | Teknik sunum içeriği |
 
 ## Health Score
 
