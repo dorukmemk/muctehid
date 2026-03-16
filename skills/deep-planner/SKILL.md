@@ -1,115 +1,99 @@
 ---
 name: deep-planner
-version: 1.0.0
-description: Creates a persistent 3-file planning system for complex tasks. Generates task_plan.md (phases + checkboxes), findings.md (research log with 2-action rule), progress.md (session log). Prevents goal drift through structured phases.
-category: planning
-autoTrigger:
-  - "complex task"
-  - "multi-step"
-  - "plan this"
-  - "plan the implementation"
-  - "break this down"
-  - "I need to implement"
-  - "architect this"
-  - "design the system"
-requiredTools:
-  - spec_init
-  - task_create
-  - route_task
-  - analyze_complexity
-outputFormat: markdown
-estimatedMinutes: 3
+description: Creates a persistent 3-file planning system under .plan/ for any complex, multi-step task. Use when a task has more than 3 sequential steps, multiple unknowns, or a risk of goal drift across sessions.
+license: MIT
 ---
 
 # Deep Planner
 
-## Purpose
-Bootstrap a persistent 3-file planning system under `.plan/` for any complex, multi-step task. All three files persist across sessions so context is never lost.
+Complex tasks fail not because of bad code — they fail because context evaporates. The context window is volatile RAM: it disappears on `/clear`, on session restart, on context compression. The filesystem is persistent disk: it survives all of that. This skill externalizes the entire cognitive state of a task into three files so that any session, at any point, can reconstruct exactly where things stand and continue without loss. The goal is never "make a plan" — the goal is to make the plan a living document that guides every action and records every decision.
 
-## Steps
-
-### 1. Goal Statement
-Write a single, precise north-star goal sentence to `.plan/task_plan.md`. This sentence must survive unchanged throughout the entire task — it is the anti-drift anchor.
+## Core Principle
 
 ```
-## Goal
-{One sentence describing what done looks like, measurable and unambiguous}
+Context Window (volatile RAM)  +  Filesystem (persistent disk)
+          ↕                               ↕
+  What you're thinking now        What actually happened
+          ↓                               ↓
+     Evaporates on /clear          Survives forever
+                    ↓
+         Write everything important to disk
+         Read from disk before every major decision
 ```
 
-### 2. Phase Decomposition
-Call `analyze_complexity` on the task description, then break the work into 3–7 sequential phases. Each phase gets 2–5 sub-task checkboxes. Write to `.plan/task_plan.md`:
+## Quick Start
+
+- Run `analyze_complexity` on the task description to determine phase count
+- Create `.plan/task_plan.md` with Goal + Phases before writing a single line of code
+- Create `.plan/findings.md` and `.plan/progress.md` immediately after
+- Start Phase 1 — and after every 2 research operations, flush to `findings.md`
+
+## File Purposes
+
+| File | Purpose | When to Update |
+|------|---------|----------------|
+| `.plan/task_plan.md` | North-star goal + phase checkboxes | Only to check off completed items; never change the Goal sentence |
+| `.plan/findings.md` | Research log, decisions, blockers, resources | Every 2 research operations (2-Action Rule); after every architectural decision |
+| `.plan/progress.md` | Session-by-session action log | On session start (new header), after each completed sub-task, on session end |
+
+## Critical Rules
+
+### 1. Plan First, Code Never First
+Create all three `.plan/` files before taking any implementation action. If you open a code file before `task_plan.md` exists, you are already operating without a plan. The files are not documentation — they are the working memory of the task.
+
+### 2. The 2-Action Rule
+After every 2 research operations (any call to `search_code`, `research_topic`, `get_context`, `audit_file`, `git_blame_context`, `commit_history_search`, or equivalent), immediately append to `.plan/findings.md`. Never defer this. Deferring means the finding may never get written if the session ends first.
+
+### 3. Re-Read Before Every Major Decision
+Before making any architectural decision, phase transition, or choosing between two implementation approaches — read `.plan/task_plan.md` first. This is an attention refresh: it re-anchors you to the Goal and prevents local-optimum decisions that drift from the original intent. The act of re-reading is not busywork; it is the mechanism that prevents drift.
+
+### 4. Phase Gates Are Hard Stops
+Do not begin Phase N+1 until every checkbox in Phase N is marked `[x]`. A half-finished phase is worse than no phase — it creates false confidence. If a phase sub-task turns out to be impossible, either decompose it further or explicitly mark it DEFERRED with a reason, then continue. A DEFERRED item is still a closed item.
+
+### 5. Log All Errors, Even Resolved Ones
+When something fails — a tool call returns an error, an approach doesn't work, a fix creates a regression — log it in `.plan/findings.md` under **Issues**, even after it's resolved. The resolved-error log is the most valuable part of the file: it prevents the same mistake from being made again later in the same task.
+
+### 6. The Goal Sentence Is Immutable
+The single Goal sentence in `task_plan.md` must never be edited after it is written. It is the anti-drift anchor. If the goal genuinely changes, start a new plan. Editing the goal mid-task means the task was re-scoped, and all prior decisions may be invalid.
+
+## The 3-Strike Error Protocol
 
 ```
-## Phases
-
-### Phase 1: {name}
-- [ ] 1.1 {sub-task}
-- [ ] 1.2 {sub-task}
-
-### Phase 2: {name}
-- [ ] 2.1 {sub-task}
-...
+ATTEMPT 1: Try the original approach. Log the error in findings.md under Issues.
+ATTEMPT 2: Try a different approach (different tool, different input, different strategy).
+            Document what changed and why in findings.md.
+ATTEMPT 3: Try a minimal reproduction — isolate the smallest failing case.
+            Document the isolation result in findings.md.
+AFTER 3 FAILURES: Stop. Write a clear escalation note in progress.md:
+  "BLOCKED: {what I tried}, {what failed each time}, {what I need from the user}"
+  Do not attempt a 4th approach autonomously. Escalate to User.
 ```
 
-Use `spec_init` if the task qualifies as a full feature spec (has requirements + design + tasks).
+## When to Use This Skill
 
-### 3. Findings Baseline
-Create `.plan/findings.md` with the following section headers populated with initial context:
+**Use for:**
+- Tasks with 3 or more sequential phases
+- Tasks with significant unknowns that require research before implementation
+- Tasks that will span multiple sessions or likely exceed one context window
+- Refactors, feature implementations, architectural changes
+- Any task where the user says "plan this", "implement this", "build this", "architect this"
 
-```
-## Requirements
-{What must be true when done}
+**Skip for:**
+- Single-step operations (rename a variable, fix a typo)
+- Tasks that can be completed in under 5 minutes with high certainty
+- Pure research tasks with no implementation component (use `deep-dive` instead)
+- Tasks already covered by an existing `.plan/` directory from a prior session (use `session-restore` instead)
 
-## Research
-{Links, findings, relevant code paths discovered}
+## Anti-Patterns
 
-## Decisions
-{Architecture or approach decisions with rationale}
+| Don't | Do Instead |
+|-------|------------|
+| Start coding before creating task_plan.md | Create all 3 files first, then open the first code file |
+| Keep findings in your head between tool calls | Flush to findings.md every 2 research operations |
+| Edit the Goal sentence when scope changes | Create a new plan; note the scope change in the old progress.md |
+| Skip phase gates to "save time" | Complete every checkbox; a DEFERRED item is better than a skipped one |
+| Try a 4th approach after 3 failures | Escalate with a clear BLOCKED note — the user has context you don't |
+| Create task_plan.md with vague phases like "do the backend" | Every phase must have 2–5 concrete, verifiable sub-task checkboxes |
+| Log only successes in progress.md | Log every action, including failed attempts and what was learned |
 
-## Issues
-{Blockers, unknowns, risks}
-
-## Resources
-{Files, docs, tools relevant to this task}
-```
-
-### 4. Progress Log
-Create `.plan/progress.md` with a session header and the 5-Question Reboot Check pre-filled for the start of work:
-
-```
-## Session: {ISO date} — Start
-
-### 5-Question Reboot Check
-1. **Where am I?** Phase 1 — not yet started
-2. **Where am I going?** Phases 1 through {N}
-3. **What is the goal?** {goal sentence from task_plan.md}
-4. **What have I learned?** Nothing yet — baseline session
-5. **What have I done?** Created planning files
-
-### Actions
-- [ ] {first action to take}
-```
-
-### 5. 2-Action Rule
-After every 2 research operations (any call to `search_code`, `research_topic`, `get_context`, `audit_file`, or similar), immediately append findings to `.plan/findings.md` under the appropriate section. Never defer this update.
-
-### 6. Phase Execution
-Work through phases top-to-bottom. For each completed sub-task:
-- Mark the checkbox: `- [x]`
-- Log the decision or outcome in `.plan/findings.md` under **Decisions**
-- Append a one-line action entry to `.plan/progress.md`
-
-Call `task_create` for any sub-task that requires more than 15 minutes of focused work. Call `route_task` to assign tasks that could be parallelized.
-
-### 7. Completion Gate
-Do not declare the task complete until:
-- Every checkbox in `.plan/task_plan.md` is marked `[x]`
-- `.plan/findings.md` contains at least one entry in **Decisions**
-- `.plan/progress.md` has a closing session entry with a summary
-
-Only then write the final summary and close.
-
-## Output Files
-- `.plan/task_plan.md` — phases and checkboxes
-- `.plan/findings.md` — accumulated research and decisions
-- `.plan/progress.md` — session-by-session action log
+---

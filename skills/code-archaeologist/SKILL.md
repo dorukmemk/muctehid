@@ -1,113 +1,114 @@
 ---
 name: code-archaeologist
-version: 1.0.0
-description: Deep historical analysis of a file or module. Uses git blame, commit history search, and semantic search to answer "why does this code exist?", "who wrote this and when?", "what was the original intent?". Produces an archaeological report with timeline, key decisions, and current state assessment.
-category: quality
-autoTrigger:
-  - "why does this exist"
-  - "history of"
-  - "who wrote"
-  - "when was this added"
-  - "understand the legacy"
-  - "archaeological"
-  - "origin of"
-  - "why is this code here"
-requiredTools:
-  - git_blame_context
-  - commit_history_search
-  - search_code
-  - research_topic
-  - complexity_score
-outputFormat: markdown
-estimatedMinutes: 4
+description: Produces a deep historical analysis of a file or module by combining git blame (who), commit history (when/why), and semantic search (what it interacts with). Use when asked why code exists, who wrote it, when a bug was introduced, or whether legacy code is safe to delete.
+license: MIT
 ---
 
 # Code Archaeologist
 
-## Purpose
-Produce a deep historical analysis of a target file or module. Answer the three fundamental legacy questions: why does this code exist, who wrote it and when, and what was the original intent versus what it has become. The output is an archaeological report with a chronological timeline, key decision trace, and current state assessment.
+Every line of code has a reason. The reason might be documented in a commit message, embedded in a bug report reference, recoverable from the author's context, or — occasionally — lost to history. This skill treats the git history as a primary source, not a secondary reference. Git blame tells you who last touched each line. Commit history tells you the story of why it changed. Semantic search tells you what the code serves. Complexity trends tell you whether it grew intentionally or accumulated. The output is an archaeological report: a reconstruction of origin, evolution, current state, and a recommendation grounded in evidence — not opinion.
 
-## Steps
-
-### 1. Blame Analysis
-Call `git_blame_context` on the target file. Extract:
-- Top 3 contributors by line count
-- The oldest commit hash and date visible in blame
-- Functions or blocks with the most distinct authors (high churn signals contested or unclear ownership)
-- Lines that have never been modified since the file was created (the "original core")
-
-### 2. Commit Timeline
-Call `commit_history_search` using the filename and any known module/class names as search terms. Build a chronological timeline:
+## Core Principle
 
 ```
-{date} {hash} {author} — {commit message}
-  Changed: {what changed in this file}
+git_blame_context    = Who touched this? When? Which lines are "original core"?
+         +
+commit_history_search = What was the intent? What changed over time? Why?
+         +
+search_code          = What depends on this? What does it serve?
+         +
+complexity_score     = Did it grow clean or accumulate debt?
+         ↓
+Archaeological Report: Origin → Evolution → Current State → Recommendation
+         ↓
+Every claim backed by git evidence — no assumptions, no speculation
 ```
 
-Sort oldest-first. Identify the following milestone commits:
-- **Creation** — when the file first appeared
-- **Major refactors** — commits that changed more than 30% of the file
-- **Bug fixes** — commits with "fix", "bug", "hotfix" in the message
-- **Feature additions** — commits that added new public functions or classes
+## Quick Start
 
-### 3. Semantic Context
-Call `search_code` to find all other files that reference the target module. This reveals:
-- What depends on this code (callers, importers)
-- What this code was designed to serve
-- Whether it grew beyond its original scope
+- Start with `git_blame_context` to get the "who/when" layer
+- Follow with `commit_history_search` to build the chronological timeline
+- Use `search_code` to map all files that depend on the target (callers, importers)
+- Use `complexity_score` to cross-reference complexity growth against the timeline
 
-Search for the main class name, exported function names, and the file path itself (for dynamic imports or config references).
+## File Purposes
 
-### 4. Architecture Research
-Call `research_topic` with the module name and its apparent domain (e.g., "authentication middleware", "payment processor"). Use this to:
-- Understand the pattern or standard the code was likely implementing
-- Identify if the original implementation followed a known approach that has since drifted
-- Surface any industry context that explains design decisions
+| Output Section | Sources Used | Key Question |
+|---------------|-------------|-------------|
+| Origin | git_blame (oldest commit), commit_history (creation commit) | When did this appear and what was the stated intent? |
+| Evolution Timeline | commit_history_search (all commits) | How did it change and why? |
+| Key Decisions | commit messages, research_topic | What architectural choices were made and what drove them? |
+| Current State | complexity_score, search_code | What does it actually do today vs. its original purpose? |
+| Recommendations | All of the above | Keep, refactor, or rewrite — and why? |
 
-### 5. Complexity Assessment
-Call `complexity_score` on the target file. Compare per-function complexity against the commit timeline to identify:
-- Which functions were simple at creation and grew complex over time (accumulated debt)
-- Which functions were complex from the start (intentional or rushed original design)
-- Functions with complexity > 10 that also have high blame-author turnover (danger zones)
+## Critical Rules
 
-### 6. Archaeological Report
-Produce the final report in this structure:
+### 1. Evidence First, Always
+Every claim in the archaeological report must cite its source: a commit hash, a blame entry, a search result. "This code appears to be..." is not acceptable. "According to commit a3f2b9 (2023-04-12): 'add session validation for GDPR compliance'..." is acceptable. If the evidence doesn't exist, say so — "no commit message provides rationale for this decision."
+
+### 2. Git Blame + Commit History Must Both Run
+`git_blame_context` gives the line-level view (who last touched what). `commit_history_search` gives the file-level view (what the commits say). Neither alone is sufficient. Blame without history shows current ownership but misses the "why it changed." History without blame misses the "what exactly is this line doing and who owns it." Both must run.
+
+### 3. Identify the Original Core
+From the blame output, identify lines that have never been modified since the file was created (single author, oldest commit date). These are the "original core" — the surviving intent of the original author. They are the most reliable evidence of the original design. Code that has never been touched despite surrounding changes is either: (a) still perfectly correct, or (b) no one has dared to change it.
+
+### 4. Complexity Trend Is Evidence of Accumulation
+Cross-reference the complexity_score results against the commit timeline. A function that was CC=3 at creation and is now CC=14 accumulated debt over time — this is identifiable from the commits that added branches. A function that was CC=12 from the start was built complex intentionally (possibly because the domain requires it). These are two very different situations with very different recommendations.
+
+### 5. Never Make Assumptions About Intent
+If a commit message says "fix bug" without elaboration, the report says "bug fix (no elaboration in commit message)." Do not infer that "it was probably a null pointer issue" without evidence. Archaeological reports must distinguish between evidence and inference. When inferring, label it: "[Inferred from context]". When stating fact, cite the source.
+
+### 6. The Recommendation Must Be Earned
+The final recommendation (Keep / Refactor / Rewrite) must be supported by at least two pieces of evidence from the analysis. "Refactor" because complexity grew significantly (evidence: CC 3→14 over 8 commits) AND because the original design predates the current framework (evidence: commit a3f2b9, 2019). One-sentence recommendations with no backing are not archaeological — they are opinions.
+
+## The 3-Strike Error Protocol
 
 ```
-## Archaeological Report: {file path}
+ATTEMPT 1: Run git_blame_context on the target file.
+           If the file has no git history (untracked or new): note this and proceed with what's available.
 
-### Origin
-- **Created:** {date} by {author}
-- **First commit:** {hash} — "{message}"
-- **Original purpose:** {inferred from first commit and initial code structure}
-- **Original size:** {line count at creation} lines
+ATTEMPT 2: If commit_history_search returns no results for the filename:
+           Try searching by class name, function name, or module identifier.
+           The file may have been renamed — search for the content, not the path.
 
-### Evolution Timeline
-| Date | Author | Change Type | Summary |
-|------|--------|-------------|---------|
-| {date} | {author} | Creation | {summary} |
-| {date} | {author} | Feature | {summary} |
-| {date} | {author} | Refactor | {summary} |
-| {date} | {author} | Bug Fix | {summary} |
+ATTEMPT 3: If semantic search (search_code) returns no dependents:
+           Search for the class name, module name, and exported function names separately.
+           Dynamic imports and string references won't appear in a typed import search.
 
-### Key Decisions
-- **{date}:** {decision} — Rationale: {inferred or stated rationale}
-
-### Current State
-- **Complexity score:** {score} (target: < 10 per function)
-- **Top contributors:** {name} ({N} lines), {name} ({M} lines)
-- **Highest-complexity function:** {name} (CC: {score})
-- **Current purpose:** {what the code actually does today}
-- **Scope drift:** {yes/no — original purpose vs. current responsibilities}
-
-### Technical Debt
-- {Specific debt item}: accumulated because {reason from history}
-
-### Recommendations
-| Assessment | Rationale |
-|------------|-----------|
-| Keep as-is / Refactor / Rewrite | {specific reasoning based on history and current state} |
-
-**If Refactor:** Focus on {specific functions} — complexity grew without corresponding test coverage.
-**If Rewrite:** Original design predates {context}; a clean implementation would be {N}% simpler.
+AFTER 3 FAILURES per step: Document what was attempted and what was not found.
+  "INCOMPLETE: git history not available for this file. The following sections are based on
+   static analysis only: [list]. The following sections cannot be completed: [list]."
+  Produce a partial report rather than no report.
 ```
+
+## When to Use This Skill
+
+**Use for:**
+- "Why does this code exist?"
+- "Who wrote this and when?"
+- "When was this security bug introduced?"
+- "Is this legacy code safe to delete?"
+- "What was the original intent of this module?"
+- "Why is this function so complex?"
+- Understanding code before a major refactor
+- Investigating a regression to find its origin commit
+
+**Skip for:**
+- Active bugs that need immediate fixing (use `auto-fixer`)
+- Impact analysis before a change (use `impact-analyzer`)
+- Simple questions answerable by reading the code (just read it)
+- Files with no git history (brand new code has no archaeology to do)
+
+## Anti-Patterns
+
+| Don't | Do Instead |
+|-------|------------|
+| Infer intent without citing evidence | Every claim needs a commit hash, blame line, or search result |
+| Run only git_blame without commit history | Always run both — they answer different questions |
+| Skip the semantic search | Callers reveal the purpose; a module with no callers is likely safe to delete |
+| Report complexity without timeline context | CC=14 means different things if it was always 14 vs. grew from 2 |
+| Give a recommendation without two evidence sources | Earn the recommendation — cite specific commits, specific findings |
+| Assume a commit message explains the full context | Commit messages are often incomplete; research_topic provides the industry context |
+| Declare code "safe to delete" without checking all reference types | Dynamic imports and config references won't appear in typed import search |
+
+---
