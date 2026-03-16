@@ -157,6 +157,15 @@ const OWASP_PATTERNS: OWASPPattern[] = [
   },
 ];
 
+/** Strip regex literals and single-line comment tails to prevent self-referential false positives */
+function stripNonCode(line: string): string {
+  // Remove inline // comments
+  const commentIdx = line.indexOf('//');
+  const stripped = commentIdx >= 0 ? line.slice(0, commentIdx) : line;
+  // Remove regex literals: /pattern/flags
+  return stripped.replace(/\/(?:[^\/\\\n]|\\.)+\/[gimsuy]*/g, '/**/');
+}
+
 export function scanSecurity(filepath: string, content?: string): AuditIssue[] {
   const issues: AuditIssue[] = [];
   let src: string;
@@ -168,11 +177,34 @@ export function scanSecurity(filepath: string, content?: string): AuditIssue[] {
   }
 
   const lines = src.split('\n');
+  let inBlockComment = false;
 
   for (const pattern of OWASP_PATTERNS) {
+    inBlockComment = false;
     for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
-      if (pattern.pattern.test(line)) {
+      let line = lines[i];
+
+      // Track block comments
+      if (inBlockComment) {
+        const end = line.indexOf('*/');
+        if (end >= 0) { inBlockComment = false; line = line.slice(end + 2); }
+        else continue;
+      }
+      if (line.includes('/*')) {
+        const start = line.indexOf('/*');
+        const end = line.indexOf('*/');
+        if (end > start) { line = line.slice(0, start) + line.slice(end + 2); }
+        else { inBlockComment = true; line = line.slice(0, start); }
+      }
+
+      const trimmed = line.trim();
+      // Skip single-line comment lines
+      if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('#')) continue;
+      // Skip pattern-definition / metadata lines (prevents self-referential false positives)
+      if (/^\s*(?:description|fix|title|cwe|id|category)\s*:/.test(line)) continue;
+
+      const testLine = stripNonCode(line);
+      if (pattern.pattern.test(testLine)) {
         issues.push({
           id: crypto.randomUUID(),
           severity: pattern.severity,

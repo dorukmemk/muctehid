@@ -57,16 +57,34 @@ export function scanSecrets(filepath: string, content?: string): SecretMatch[] {
   }
 
   const lines = src.split('\n');
+  let inBlockComment = false;
 
   for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+    let line = lines[i];
 
-    // Skip comments
+    // Track /* ... */ block comments
+    if (inBlockComment) {
+      const end = line.indexOf('*/');
+      if (end >= 0) { inBlockComment = false; line = line.slice(end + 2); }
+      else continue;
+    }
+    if (line.includes('/*')) {
+      const start = line.indexOf('/*');
+      const end = line.indexOf('*/');
+      if (end > start) { line = line.slice(0, start) + line.slice(end + 2); }
+      else { inBlockComment = true; line = line.slice(0, start); }
+    }
+
+    // Skip single-line comments
     const trimmed = line.trim();
     if (trimmed.startsWith('//') || trimmed.startsWith('#') || trimmed.startsWith('*')) continue;
+    // Skip pattern-definition lines (self-referential false positive prevention)
+    if (/^\s*(?:type|pattern|description|fix)\s*:/.test(line)) continue;
+    // Strip regex literals so patterns defined in code don't self-match
+    const testLine = line.replace(/\/(?:[^\/\\\n]|\\.)+\/[gimsuy]*/g, '/**/');
 
     for (const sp of SECRET_PATTERNS) {
-      const match = sp.pattern.exec(line);
+      const match = sp.pattern.exec(testLine);
       if (!match) continue;
 
       const value = match[1] ?? match[0];

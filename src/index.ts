@@ -30,6 +30,27 @@ import { selectSkills } from './lib/orchestrator/skill-selector.js';
 import { routeTask } from './lib/orchestrator/task-router.js';
 import { TaskPriority, TaskCategory, TaskStatus } from './types/v2.js';
 
+// ─── Collect files (single file or recursive dir walk) ────────────────────────
+function collectFiles(target: string, extensions: string[]): string[] {
+  if (!fs.existsSync(target)) return [];
+  const stat = fs.statSync(target);
+  if (stat.isFile()) return [target];
+  const results: string[] = [];
+  const walk = (dir: string) => {
+    let entries: fs.Dirent[];
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules' && e.name !== 'dist') {
+        walk(path.join(dir, e.name));
+      } else if (e.isFile() && extensions.some(ext => e.name.endsWith(ext))) {
+        results.push(path.join(dir, e.name));
+      }
+    }
+  };
+  walk(target);
+  return results;
+}
+
 // ─── Resolve paths ────────────────────────────────────────────────────────────
 const REPO_ROOT = process.env.REPO_ROOT ?? process.cwd();
 const AUDIT_DATA_DIR = process.env.AUDIT_DATA_DIR
@@ -254,26 +275,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     else if (name === 'security_scan') {
       const { scanSecurity } = await import('./lib/audit/security.js');
       const target = args.path as string;
-      const content = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : '';
-      const issues = scanSecurity(target, content);
-      text = `## Security Scan: ${target}\n\n**Issues:** ${issues.length}\n\n` +
-        issues.map(i => `- [${i.severity.toUpperCase()}] ${i.title} (line ${i.line})`).join('\n');
+      const files = collectFiles(target, ['.ts', '.js', '.tsx', '.jsx', '.py', '.php', '.rb', '.go', '.java', '.cs']);
+      const allIssues = files.flatMap(f => {
+        try { return scanSecurity(f, fs.readFileSync(f, 'utf-8')); } catch { return []; }
+      });
+      text = `## Security Scan: ${target}\n\n**Files scanned:** ${files.length} | **Issues:** ${allIssues.length}\n\n` +
+        (allIssues.length === 0 ? '✅ No issues found.' :
+          allIssues.map(i => `- [${i.severity.toUpperCase()}] **${i.title}** \`${path.relative(process.cwd(), i.filepath)}:${i.line}\``).join('\n'));
     }
     else if (name === 'find_secrets') {
       const target = args.path as string;
-      const content = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : '';
-      const secrets = scanSecrets(target, content);
-      text = secrets.length === 0
-        ? `✅ No secrets found in ${target}`
-        : `## Secrets Found (${secrets.length})\n\n` + secrets.map(s => `- **${s.type}** at line ${s.line}: \`${s.value}\``).join('\n');
+      const files = collectFiles(target, ['.ts', '.js', '.tsx', '.jsx', '.py', '.env', '.json', '.yaml', '.yml', '.rb', '.go', '.java', '.cs', '.php', '.sh']);
+      const allSecrets = files.flatMap(f => {
+        try { return scanSecrets(f, fs.readFileSync(f, 'utf-8')); } catch { return []; }
+      });
+      text = allSecrets.length === 0
+        ? `✅ No secrets found in ${target} (${files.length} files scanned)`
+        : `## Secrets Found (${allSecrets.length}) in ${files.length} files\n\n` +
+          allSecrets.map(s => `- **${s.type}** \`${path.relative(process.cwd(), s.filepath)}:${s.line}\` → \`${s.value}\``).join('\n');
     }
     else if (name === 'find_todos') {
       const target = args.path as string;
-      const content = fs.existsSync(target) ? fs.readFileSync(target, 'utf-8') : '';
-      const todos = scanTodos(target, content);
-      text = todos.length === 0
-        ? '✅ No TODO/FIXME comments found.'
-        : `## TODOs (${todos.length})\n\n` + todos.map(t => `- **[${t.type}]** line ${t.line}: ${t.text}`).join('\n');
+      const files = collectFiles(target, ['.ts', '.js', '.tsx', '.jsx', '.py', '.go', '.java', '.cs', '.rb', '.php', '.rs', '.swift', '.kt']);
+      const allTodos = files.flatMap(f => {
+        try {
+          return scanTodos(f, fs.readFileSync(f, 'utf-8')).map(t => ({ ...t, filepath: f }));
+        } catch { return []; }
+      });
+      text = allTodos.length === 0
+        ? `✅ No TODO/FIXME comments found in ${target} (${files.length} files scanned)`
+        : `## TODOs (${allTodos.length}) across ${files.length} files\n\n` +
+          allTodos.map(t => `- **[${t.type}]** \`${path.relative(process.cwd(), (t as any).filepath)}:${t.line}\` — ${t.text}`).join('\n');
     }
     else if (name === 'complexity_score') {
       const issues = complexityIssues(args.filepath as string);
