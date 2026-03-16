@@ -231,10 +231,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             mode: (args.mode as 'bm25' | 'vector' | 'hybrid') ?? 'hybrid',
             filter: args.language ? { language: args.language as string } : undefined,
           });
-          if (!results.length) { text = 'No results found.'; break; }
-          text = results.map((r, i) =>
-            `### ${i + 1}. ${r.chunk.filepath}:${r.chunk.startLine}-${r.chunk.endLine}\n\`\`\`${r.chunk.language}\n${r.chunk.content.slice(0, 600)}\n\`\`\``
-          ).join('\n\n');
+          if (!results.length) {
+            // Memory empty or not indexed yet — fallback: grep actual files
+            const grepRoot = REPO_ROOT;
+            const grepFiles = collectFiles(grepRoot, ['.ts','.tsx','.js','.jsx','.py','.go','.rs','.java']);
+            const query = (args.query as string).toLowerCase();
+            const terms = query.split(/\s+/).filter(t => t.length > 2);
+            const hits: string[] = [];
+            for (const file of grepFiles) {
+              if (hits.length >= 10) break;
+              try {
+                const lines = fs.readFileSync(file, 'utf-8').split('\n');
+                for (let i = 0; i < lines.length; i++) {
+                  const lower = lines[i].toLowerCase();
+                  if (terms.every(t => lower.includes(t))) {
+                    const excerpt = lines.slice(Math.max(0, i - 1), Math.min(lines.length, i + 5)).join('\n');
+                    hits.push(`### ${path.relative(REPO_ROOT, file)}:${i + 1}\n\`\`\`\n${excerpt}\n\`\`\``);
+                    if (hits.length >= 10) break;
+                  }
+                }
+              } catch { /* skip */ }
+            }
+            text = hits.length > 0
+              ? `> ⚠️ Index boş — dosyalardan doğrudan arama yapıldı. \`index_codebase\` çalıştırarak daha iyi sonuç alın.\n\n${hits.join('\n\n')}`
+              : `Sonuç bulunamadı. Önce \`index_codebase\` çalıştırın.`;
+            break;
+          }
+          text = `**${results.length} sonuç** — "${args.query}"\n\n` +
+            results.map((r, i) => {
+              const highlight = r.highlight ? `\n> 🎯 **Eşleşen satır:** \`${r.highlight}\`` : '';
+              const score = r.score.toFixed(3);
+              return `### ${i + 1}. \`${r.chunk.filepath}:${r.chunk.startLine}-${r.chunk.endLine}\` (skor: ${score})${highlight}\n\`\`\`${r.chunk.language}\n${r.chunk.content.slice(0, 1000)}\n\`\`\``;
+            }).join('\n\n');
           break;
         }
         case 'add_memory': {
@@ -249,8 +277,60 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           break;
         }
         case 'get_context': {
-          const results = await mem.search(args.filepath as string, { k: 5, mode: 'bm25' });
-          text = results.map(r => `Lines ${r.chunk.startLine}-${r.chunk.endLine}:\n\`\`\`${r.chunk.language}\n${r.chunk.content}\n\`\`\``).join('\n\n') || 'No context found.';
+          const filepath = args.filepath as string;
+          const parts: string[] = [];
+
+          // 1. Try to read the actual file directly (most reliable)
+          const candidates = [
+            filepath,
+            path.join(REPO_ROOT, filepath),
+            path.join(process.cwd(), filepath),
+          ];
+          let fileContent: string | null = null;
+          let resolvedPath: string | null = null;
+          for (const candidate of candidates) {
+            try {
+              if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
+                fileContent = fs.readFileSync(candidate, 'utf-8');
+                resolvedPath = candidate;
+                break;
+              }
+            } catch { /* try next */ }
+          }
+
+          if (fileContent) {
+            const lines = fileContent.split('\n');
+            const ext = path.extname(resolvedPath!).slice(1) || 'text';
+            // Extract structure: imports, exports, function/class names
+            const structure: string[] = [];
+            for (let i = 0; i < lines.length; i++) {
+              const l = lines[i];
+              if (/^(import|export|class|function|const|interface|type|enum)\s/.test(l.trim())) {
+                structure.push(`  ${i + 1}: ${l.trim().slice(0, 100)}`);
+              }
+            }
+            parts.push(`## 📄 ${filepath} (${lines.length} satır)\n\`\`\`${ext}\n${fileContent.slice(0, 3000)}${fileContent.length > 3000 ? '\n// ... (truncated)' : ''}\n\`\`\``);
+            if (structure.length > 0) {
+              parts.push(`### Yapı (import/export/class/function)\n\`\`\`\n${structure.slice(0, 30).join('\n')}\n\`\`\``);
+            }
+          }
+
+          // 2. Supplement with memory index (additional cross-reference context)
+          try {
+            const memResults = await mem.search(filepath, { k: 5, mode: 'bm25' });
+            if (memResults.length > 0 && !fileContent) {
+              parts.push(`### Index'ten bağlam (dosya okunamadı — index kullanılıyor)\n` +
+                memResults.map(r => `Lines ${r.chunk.startLine}-${r.chunk.endLine}:\n\`\`\`${r.chunk.language}\n${r.chunk.content.slice(0, 800)}\n\`\`\``).join('\n\n'));
+            } else if (memResults.length > 0) {
+              // Show indexed symbols for this file as quick reference
+              const symbols = [...new Set(memResults.flatMap(r => r.chunk.symbols ?? []))].slice(0, 20);
+              if (symbols.length > 0) {
+                parts.push(`### Index'teki semboller\n${symbols.map(s => `- \`${s}\``).join('\n')}`);
+              }
+            }
+          } catch { /* index not ready */ }
+
+          text = parts.join('\n\n') || `Dosya bulunamadı: ${filepath}\nÖnce \`index_codebase\` çalıştırın.`;
           break;
         }
         case 'memory_stats': {
@@ -384,19 +464,127 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // ── Context tools ─────────────────────────────────────────────────────────
     else if (name === 'find_references') {
-      const mem = await getMemory();
-      const results = await mem.search(args.symbol as string, { k: 20, mode: 'bm25' });
-      text = results.length === 0
-        ? `No references found for "${args.symbol}"`
-        : `## References: ${args.symbol}\n\n` + results.map(r => `- \`${r.chunk.filepath}:${r.chunk.startLine}\``).join('\n');
+      const symbol = args.symbol as string;
+      const searchRoot = (args.path as string) ?? REPO_ROOT;
+      const findings: Array<{ file: string; line: number; content: string; context: string }> = [];
+
+      // 1. Grep actual files (primary — always works, no index needed)
+      const srcFiles = collectFiles(searchRoot, ['.ts','.tsx','.js','.jsx','.py','.go','.java','.cs','.rb','.php','.rs','.swift','.kt']);
+      const symEscaped = symbol.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const symRegex = new RegExp(`\\b${symEscaped}\\b`);
+
+      for (const file of srcFiles) {
+        if (findings.length >= 30) break;
+        try {
+          const lines = fs.readFileSync(file, 'utf-8').split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            if (symRegex.test(lines[i])) {
+              const ctx = lines.slice(Math.max(0, i - 1), Math.min(lines.length, i + 3)).join('\n');
+              findings.push({
+                file: path.relative(REPO_ROOT, file),
+                line: i + 1,
+                content: lines[i].trim().slice(0, 120),
+                context: ctx,
+              });
+              if (findings.length >= 30) break;
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      // 2. Supplement with memory search for broader semantic coverage
+      try {
+        const mem = await getMemory();
+        const memResults = await mem.search(symbol, { k: 10, mode: 'bm25' });
+        for (const r of memResults) {
+          const relPath = path.relative(REPO_ROOT, r.chunk.filepath);
+          // Only add if not already found by direct grep
+          if (!findings.some(f => f.file === relPath && Math.abs(f.line - r.chunk.startLine) < 5)) {
+            findings.push({
+              file: relPath,
+              line: r.chunk.startLine,
+              content: r.chunk.content.slice(0, 120).replace(/\n/g, ' '),
+              context: r.chunk.content.slice(0, 300),
+            });
+          }
+        }
+      } catch { /* index not ready */ }
+
+      if (findings.length === 0) {
+        text = `"${symbol}" için referans bulunamadı (${srcFiles.length} dosya tarandı).`;
+      } else {
+        // Group by file
+        const byFile = new Map<string, typeof findings>();
+        for (const f of findings) {
+          if (!byFile.has(f.file)) byFile.set(f.file, []);
+          byFile.get(f.file)!.push(f);
+        }
+        text = `## Referanslar: \`${symbol}\`\n\n**${findings.length} kullanım** — ${byFile.size} dosyada\n\n`;
+        for (const [file, refs] of byFile) {
+          text += `### \`${file}\` (${refs.length} kullanım)\n`;
+          for (const r of refs) {
+            text += `\`\`\`\n:${r.line}: ${r.content}\n\`\`\`\n`;
+          }
+          text += '\n';
+        }
+      }
     }
     else if (name === 'get_dependencies') {
       const filepath = args.filepath as string;
-      if (!fs.existsSync(filepath)) throw new Error(`File not found: ${filepath}`);
-      const content = fs.readFileSync(filepath, 'utf-8');
-      const imports = [...content.matchAll(/(?:import|require)\s*(?:\{[^}]*\}|\w+|\*\s+as\s+\w+)\s+from\s+['"]([^'"]+)['"]/g)]
-        .map(m => m[1]);
-      text = `## Dependencies: ${filepath}\n\n` + (imports.length === 0 ? 'No imports found.' : imports.map(i => `- \`${i}\``).join('\n'));
+      const candidates = [filepath, path.join(REPO_ROOT, filepath)];
+      let resolved: string | null = null;
+      for (const c of candidates) {
+        if (fs.existsSync(c) && fs.statSync(c).isFile()) { resolved = c; break; }
+      }
+      if (!resolved) throw new Error(`Dosya bulunamadı: ${filepath}`);
+
+      const content = fs.readFileSync(resolved, 'utf-8');
+      const lines = content.split('\n');
+
+      // Parse full import statements (named, default, namespace, side-effect)
+      const importDetails: Array<{ what: string; from: string; isLocal: boolean; line: number }> = [];
+      for (let i = 0; i < lines.length; i++) {
+        const m = lines[i].match(/^import\s*((?:\{[^}]*\}|\w+|\*\s+as\s+\w+|type\s+\{[^}]*\})?)\s*(?:,\s*(?:\{[^}]*\}|\w+))?\s*from\s+['"]([^'"]+)['"]/);
+        if (m) {
+          importDetails.push({ what: m[1].trim() || '(side-effect)', from: m[2], isLocal: m[2].startsWith('.'), line: i + 1 });
+        }
+      }
+
+      // Show exported symbols from this file
+      const exports: string[] = [];
+      for (const l of lines) {
+        const em = l.match(/^export\s+(?:default\s+)?(?:(?:async\s+)?function|class|const|let|var|type|interface|enum)\s+(\w+)/);
+        if (em) exports.push(em[1]);
+      }
+
+      const relPath = path.relative(REPO_ROOT, resolved);
+      text = `## Bağımlılıklar: \`${relPath}\`\n\n`;
+      text += `**Import:** ${importDetails.length} | **Export:** ${exports.length} sembol\n\n`;
+
+      if (importDetails.length > 0) {
+        const local = importDetails.filter(i => i.isLocal);
+        const external = importDetails.filter(i => !i.isLocal);
+
+        if (local.length > 0) {
+          text += `### Yerel Import'lar (${local.length})\n\n`;
+          text += `| Satır | Nereden | Ne İmport Ediliyor |\n|-------|---------|-------------------|\n`;
+          for (const i of local) {
+            text += `| ${i.line} | \`${i.from}\` | \`${i.what.slice(0, 60)}\` |\n`;
+          }
+          text += '\n';
+        }
+
+        if (external.length > 0) {
+          text += `### Dış Paket Import'ları (${external.length})\n\n`;
+          text += external.map(i => `- \`${i.from}\` → \`${i.what.slice(0, 60)}\``).join('\n');
+          text += '\n\n';
+        }
+      }
+
+      if (exports.length > 0) {
+        text += `### Bu Dosyanın Export'ları (${exports.length})\n\n`;
+        text += exports.map(e => `- \`${e}\``).join('\n');
+      }
     }
 
     // ── Orchestrator tools ────────────────────────────────────────────────────
@@ -434,26 +622,64 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     else if (name === 'spec_generate') {
       const spec = specEngine.get(args.specId as string);
       if (!spec) throw new Error(`Spec bulunamadı: ${args.specId}`);
-      const ctx = args.context as string ?? '';
+      let ctx = args.context as string ?? '';
+
       switch (args.phase) {
         case 'requirements': {
+          // Auto-enrich context from codebase if not provided
+          if (!ctx) {
+            try {
+              const memory = await getMemory();
+              const memResults = await memory.search(spec.name + ' ' + spec.description, { k: 6, mode: 'hybrid' });
+              if (memResults.length > 0) {
+                ctx = memResults.map(r =>
+                  `// ${r.chunk.filepath}:${r.chunk.startLine}\n${r.chunk.content.slice(0, 200)}`
+                ).join('\n\n');
+              }
+            } catch { /* no index — proceed without context */ }
+            // Also scan for related file patterns
+            if (!ctx) {
+              const slug = spec.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
+              const relatedFiles = collectFiles(REPO_ROOT, ['.ts','.tsx','.js','.jsx'])
+                .filter(f => f.toLowerCase().includes(slug.slice(0, 8)))
+                .slice(0, 3);
+              if (relatedFiles.length > 0) {
+                ctx = relatedFiles.map(f => {
+                  try { return `// ${path.relative(REPO_ROOT, f)}\n${fs.readFileSync(f, 'utf-8').slice(0, 300)}`; }
+                  catch { return ''; }
+                }).filter(Boolean).join('\n\n');
+              }
+            }
+          }
           const content = specEngine.generateRequirementsContent(spec.name, spec.description, ctx);
           specEngine.writeRequirements(args.specId as string, content);
-          text = `✅ requirements.md oluşturuldu: ${spec.requirementsPath}`;
+          text = `✅ **requirements.md** oluşturuldu\n\n📋 \`${spec.requirementsPath}\`\n\nSonraki: \`spec_generate specId="${args.specId as string}" phase="design"\``;
           break;
         }
         case 'design': {
-          const reqContent = fs.existsSync(spec.requirementsPath) ? fs.readFileSync(spec.requirementsPath, 'utf-8') : '';
+          const reqContent = fs.existsSync(spec.requirementsPath) ? fs.readFileSync(spec.requirementsPath, 'utf-8') : spec.description;
           const content = specEngine.generateDesignContent(args.specId as string, reqContent);
           specEngine.writeDesign(args.specId as string, content);
-          text = `✅ design.md oluşturuldu: ${spec.designPath}`;
+          text = `✅ **design.md** oluşturuldu\n\n🏗️ \`${spec.designPath}\`\n\nSonraki: \`spec_generate specId="${args.specId as string}" phase="tasks"\``;
           break;
         }
         case 'tasks': {
-          const phases = ctx ? ctx.split('\n').filter(Boolean) : ['Temel uygulama', 'Test ve doğrulama', 'Dokümantasyon'];
+          // Derive phases from design.md if available
+          let phases: string[] = [];
+          if (ctx) {
+            phases = ctx.split('\n').filter(Boolean);
+          } else if (fs.existsSync(spec.designPath)) {
+            const designContent = fs.readFileSync(spec.designPath, 'utf-8');
+            // Extract component names as phases
+            const compMatches = [...designContent.matchAll(/\|\s*`[^`]+`\s*\|\s*([^|]+)\|/g)];
+            phases = compMatches.map(m => `Implement: ${m[1].trim()}`).filter(Boolean).slice(0, 6);
+          }
+          if (phases.length === 0) {
+            phases = ['Tip tanımları ve şema', 'Temel servis / repository katmanı', 'API endpoint / controller', 'UI bileşenleri', 'Test yazımı', 'Dokümantasyon'];
+          }
           const content = specEngine.generateTasksContent(args.specId as string, spec.name, phases);
           specEngine.writeTasks(args.specId as string, content);
-          text = `✅ tasks.md oluşturuldu: ${spec.tasksPath}`;
+          text = `✅ **tasks.md** oluşturuldu\n\n📝 \`${spec.tasksPath}\`\n\n**${phases.length} görev** tanımlandı:\n${phases.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nSonraki: \`task_next\` ile ilk göreve başla`;
           break;
         }
         default:
@@ -619,14 +845,65 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // ── Research tools ────────────────────────────────────────────────────────
     else if (name === 'research_topic') {
-      const eng = await getResearchEngine();
+      const topic = args.topic as string;
       const maxSources = args.depth === 'quick' ? 5 : args.depth === 'deep' ? 30 : 15;
-      const result = await eng.research(args.topic as string, { maxSources });
-      text = `## Araştırma: ${result.topic}\n\n` +
-        `**Güven Skoru:** ${(result.confidence * 100).toFixed(0)}%\n` +
-        `**Kaynak Sayısı:** ${result.sourcesUsed.length}\n\n` +
-        `${result.hallucinationReport.flaggedText}\n\n` +
-        (result.caveats.length > 0 ? `### Uyarılar\n${result.caveats.map(c => `- ${c}`).join('\n')}` : '');
+
+      // 1. Direct file search (always reliable)
+      const srcFiles = collectFiles(REPO_ROOT, ['.ts','.tsx','.js','.jsx','.py','.go','.java','.cs','.md']);
+      const terms = topic.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+      const directHits: Array<{ file: string; line: number; excerpt: string; score: number }> = [];
+
+      for (const file of srcFiles) {
+        if (directHits.length >= maxSources) break;
+        try {
+          const lines = fs.readFileSync(file, 'utf-8').split('\n');
+          for (let i = 0; i < lines.length; i++) {
+            const lower = lines[i].toLowerCase();
+            const matchCount = terms.filter(t => lower.includes(t)).length;
+            if (matchCount >= Math.min(2, terms.length)) {
+              const excerpt = lines.slice(Math.max(0, i - 1), Math.min(lines.length, i + 6)).join('\n');
+              directHits.push({
+                file: path.relative(REPO_ROOT, file),
+                line: i + 1,
+                excerpt,
+                score: matchCount / terms.length,
+              });
+              if (directHits.length >= maxSources) break;
+            }
+          }
+        } catch { /* skip */ }
+      }
+
+      // 2. Memory search for semantic coverage
+      const memHits: Array<{ file: string; line: number; excerpt: string; score: number }> = [];
+      try {
+        const eng = await getResearchEngine();
+        const result = await eng.research(topic, { maxSources });
+        for (const f of result.findings.slice(0, 8)) {
+          const relPath = path.relative(REPO_ROOT, f.source.filepath ?? '');
+          if (!directHits.some(h => h.file === relPath)) {
+            memHits.push({
+              file: relPath,
+              line: 0,
+              excerpt: f.evidence.slice(0, 400),
+              score: f.confidence,
+            });
+          }
+        }
+      } catch { /* index empty */ }
+
+      const allHits = [...directHits, ...memHits].sort((a, b) => b.score - a.score).slice(0, maxSources);
+
+      if (allHits.length === 0) {
+        text = `## Araştırma: ${topic}\n\n"${topic}" konusunda ilgili kod bulunamadı.\n\nÖneri: \`index_codebase\` çalıştırın ve daha spesifik terimler deneyin.`;
+      } else {
+        text = `## Araştırma: ${topic}\n\n**${allHits.length} ilgili bulgu** — doğrudan dosya taraması + index\n\n`;
+        for (let i = 0; i < allHits.length; i++) {
+          const h = allHits[i];
+          const loc = h.line > 0 ? `:${h.line}` : '';
+          text += `### ${i + 1}. \`${h.file}${loc}\`\n\`\`\`\n${h.excerpt.slice(0, 500)}\n\`\`\`\n\n`;
+        }
+      }
     }
     else if (name === 'verify_claim') {
       const eng = await getResearchEngine();
