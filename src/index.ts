@@ -183,7 +183,7 @@ const TOOLS = [
   { name: 'spec_list', description: 'Use at the start of a session to see ongoing features and their current phase.', inputSchema: { type: 'object', properties: {} } },
   { name: 'spec_get', description: 'Use to load the full context of a specific feature spec before working on it.', inputSchema: { type: 'object', required: ['specId'], properties: { specId: { type: 'string' } } } },
   { name: 'spec_update_status', description: 'Use when advancing a spec from one phase to the next (requirements → design → tasks → executing → done).', inputSchema: { type: 'object', required: ['specId', 'status'], properties: { specId: { type: 'string' }, status: { type: 'string', enum: ['requirements', 'design', 'tasks', 'executing', 'done'] } } } },
-  { name: 'spec_generate', description: 'Use to auto-generate the content for each spec phase. Call three times in sequence: phase=requirements, then design, then tasks.', inputSchema: { type: 'object', required: ['specId', 'phase'], properties: { specId: { type: 'string' }, phase: { type: 'string', enum: ['requirements', 'design', 'tasks'] }, context: { type: 'string' } } } },
+  { name: 'spec_generate', description: 'Two-mode tool. WITHOUT content param: returns an expert prompt instructing the LLM what to write for that phase — LLM writes the content and calls back. WITH content param: saves the LLM-generated content to file. Flow: call without content → LLM generates → call again with content to save. Phases in order: requirements → design → tasks.', inputSchema: { type: 'object', required: ['specId', 'phase'], properties: { specId: { type: 'string' }, phase: { type: 'string', enum: ['requirements', 'design', 'tasks'] }, content: { type: 'string', description: 'The markdown content to save. Omit on first call to get the writing prompt.' }, context: { type: 'string' } } } },
 
   // ── Tasks (8) ─────────────────────────────────────────────────────────────
   { name: 'task_create', description: 'Use when user mentions work to be done, a bug to fix, or a TODO that should be tracked. Also use after spec_generate to create implementation tasks.', inputSchema: { type: 'object', required: ['title', 'description'], properties: { title: { type: 'string' }, description: { type: 'string' }, priority: { type: 'string', enum: ['critical', 'high', 'medium', 'low'] }, category: { type: 'string', enum: ['feature', 'bug', 'refactor', 'docs', 'test', 'research', 'chore'] }, filepath: { type: 'string' }, estimateHours: { type: 'number' }, dependsOn: { type: 'array', items: { type: 'string' } }, tags: { type: 'array', items: { type: 'string' } }, miniPrompt: { type: 'string' }, specId: { type: 'string' } } } },
@@ -622,64 +622,77 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     else if (name === 'spec_generate') {
       const spec = specEngine.get(args.specId as string);
       if (!spec) throw new Error(`Spec bulunamadı: ${args.specId}`);
-      let ctx = args.context as string ?? '';
+      const providedContent = args.content as string | undefined;
 
       switch (args.phase) {
         case 'requirements': {
-          // Auto-enrich context from codebase if not provided
-          if (!ctx) {
+          if (providedContent) {
+            specEngine.writeRequirements(args.specId as string, providedContent);
+            text = `✅ **requirements.md** kaydedildi\n\n📋 \`${spec.requirementsPath}\`\n\nSonraki: \`spec_generate specId="${args.specId as string}" phase="design"\``;
+          } else {
+            // Gather codebase context for the prompt
+            let codebaseCtx = '';
             try {
-              const memory = await getMemory();
-              const memResults = await memory.search(spec.name + ' ' + spec.description, { k: 6, mode: 'hybrid' });
-              if (memResults.length > 0) {
-                ctx = memResults.map(r =>
-                  `// ${r.chunk.filepath}:${r.chunk.startLine}\n${r.chunk.content.slice(0, 200)}`
+              const mem = await getMemory();
+              const results = await mem.search(spec.name + ' ' + spec.description, { k: 8, mode: 'hybrid' });
+              if (results.length > 0) {
+                codebaseCtx = results.map(r =>
+                  `// ${path.relative(REPO_ROOT, r.chunk.filepath)}:${r.chunk.startLine}\n${r.chunk.content.slice(0, 250)}`
                 ).join('\n\n');
               }
-            } catch { /* no index — proceed without context */ }
-            // Also scan for related file patterns
-            if (!ctx) {
+            } catch { /* no index — proceed without */ }
+            if (!codebaseCtx) {
               const slug = spec.name.replace(/[^a-z0-9]/gi, '-').toLowerCase();
-              const relatedFiles = collectFiles(REPO_ROOT, ['.ts','.tsx','.js','.jsx'])
-                .filter(f => f.toLowerCase().includes(slug.slice(0, 8)))
-                .slice(0, 3);
-              if (relatedFiles.length > 0) {
-                ctx = relatedFiles.map(f => {
+              const relFiles = collectFiles(REPO_ROOT, ['.ts', '.tsx', '.js', '.jsx'])
+                .filter(f => f.toLowerCase().includes(slug.slice(0, 8))).slice(0, 4);
+              if (relFiles.length > 0) {
+                codebaseCtx = relFiles.map(f => {
                   try { return `// ${path.relative(REPO_ROOT, f)}\n${fs.readFileSync(f, 'utf-8').slice(0, 300)}`; }
                   catch { return ''; }
                 }).filter(Boolean).join('\n\n');
               }
             }
+            const topFiles = collectFiles(REPO_ROOT, ['.ts', '.tsx']).slice(0, 20)
+              .map(f => `  - ${path.relative(REPO_ROOT, f)}`).join('\n');
+            text = buildRequirementsPrompt(spec.name, spec.description, args.specId as string, codebaseCtx, topFiles);
           }
-          const content = specEngine.generateRequirementsContent(spec.name, spec.description, ctx);
-          specEngine.writeRequirements(args.specId as string, content);
-          text = `✅ **requirements.md** oluşturuldu\n\n📋 \`${spec.requirementsPath}\`\n\nSonraki: \`spec_generate specId="${args.specId as string}" phase="design"\``;
           break;
         }
         case 'design': {
-          const reqContent = fs.existsSync(spec.requirementsPath) ? fs.readFileSync(spec.requirementsPath, 'utf-8') : spec.description;
-          const content = specEngine.generateDesignContent(args.specId as string, reqContent);
-          specEngine.writeDesign(args.specId as string, content);
-          text = `✅ **design.md** oluşturuldu\n\n🏗️ \`${spec.designPath}\`\n\nSonraki: \`spec_generate specId="${args.specId as string}" phase="tasks"\``;
+          if (providedContent) {
+            specEngine.writeDesign(args.specId as string, providedContent);
+            text = `✅ **design.md** kaydedildi\n\n🏗️ \`${spec.designPath}\`\n\nSonraki: \`spec_generate specId="${args.specId as string}" phase="tasks"\``;
+          } else {
+            const reqContent = fs.existsSync(spec.requirementsPath)
+              ? fs.readFileSync(spec.requirementsPath, 'utf-8')
+              : `**Açıklama:** ${spec.description}`;
+            // Detect architectural patterns in the codebase
+            const srcFiles = collectFiles(path.join(REPO_ROOT, 'src'), ['.ts', '.tsx']).slice(0, 50);
+            const patterns: string[] = [];
+            if (srcFiles.some(f => f.includes('repository'))) patterns.push('Repository pattern mevcut');
+            if (srcFiles.some(f => f.includes('/hooks/'))) patterns.push('React hooks kullanılıyor');
+            if (srcFiles.some(f => f.includes('/api/'))) patterns.push('Next.js API routes mevcut');
+            if (fs.existsSync(path.join(REPO_ROOT, 'prisma', 'schema.prisma'))) patterns.push('Prisma ORM kullanılıyor');
+            if (srcFiles.some(f => f.includes('middleware'))) patterns.push('Middleware katmanı mevcut');
+            if (fs.existsSync(path.join(REPO_ROOT, 'drizzle.config.ts')) || fs.existsSync(path.join(REPO_ROOT, 'drizzle.config.js'))) patterns.push('Drizzle ORM kullanılıyor');
+            const archContext = patterns.join(', ');
+            text = buildDesignPrompt(spec.name, args.specId as string, reqContent, spec.designPath, archContext);
+          }
           break;
         }
         case 'tasks': {
-          // Derive phases from design.md if available
-          let phases: string[] = [];
-          if (ctx) {
-            phases = ctx.split('\n').filter(Boolean);
-          } else if (fs.existsSync(spec.designPath)) {
-            const designContent = fs.readFileSync(spec.designPath, 'utf-8');
-            // Extract component names as phases
-            const compMatches = [...designContent.matchAll(/\|\s*`[^`]+`\s*\|\s*([^|]+)\|/g)];
-            phases = compMatches.map(m => `Implement: ${m[1].trim()}`).filter(Boolean).slice(0, 6);
+          if (providedContent) {
+            specEngine.writeTasks(args.specId as string, providedContent);
+            text = `✅ **tasks.md** kaydedildi\n\n📝 \`${spec.tasksPath}\`\n\nSonraki: \`task_next\` ile göreve başla`;
+          } else {
+            const reqContent = fs.existsSync(spec.requirementsPath)
+              ? fs.readFileSync(spec.requirementsPath, 'utf-8').slice(0, 2000)
+              : spec.description;
+            const designContent = fs.existsSync(spec.designPath)
+              ? fs.readFileSync(spec.designPath, 'utf-8').slice(0, 2000)
+              : '';
+            text = buildTasksPrompt(spec.name, args.specId as string, reqContent, designContent, spec.tasksPath);
           }
-          if (phases.length === 0) {
-            phases = ['Tip tanımları ve şema', 'Temel servis / repository katmanı', 'API endpoint / controller', 'UI bileşenleri', 'Test yazımı', 'Dokümantasyon'];
-          }
-          const content = specEngine.generateTasksContent(args.specId as string, spec.name, phases);
-          specEngine.writeTasks(args.specId as string, content);
-          text = `✅ **tasks.md** oluşturuldu\n\n📝 \`${spec.tasksPath}\`\n\n**${phases.length} görev** tanımlandı:\n${phases.map((p, i) => `${i + 1}. ${p}`).join('\n')}\n\nSonraki: \`task_next\` ile ilk göreve başla`;
           break;
         }
         default:
@@ -960,6 +973,379 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     };
   }
 });
+
+// ─── Spec prompt builders (LLM generates content, MCP saves it) ───────────────
+
+function buildRequirementsPrompt(
+  name: string,
+  description: string,
+  specId: string,
+  codebaseCtx: string,
+  repoFiles: string,
+): string {
+  return `# Feature Spec — Requirements Phase
+
+You are a senior software architect helping define requirements for a new feature. Your job is to transform the rough idea below into a precise, complete requirements document.
+
+## Feature Input
+
+**Name:** ${name}
+**Spec ID:** ${specId}
+**Description:** ${description}
+${codebaseCtx ? `\n## Relevant Codebase Context\n\`\`\`\n${codebaseCtx.slice(0, 1800)}\n\`\`\`` : ''}
+${repoFiles ? `\n## Repository Structure (reference)\n${repoFiles}` : ''}
+
+---
+
+## Your Task
+
+Write a complete \`requirements.md\` document following the exact format below. Think through:
+- Edge cases and failure scenarios
+- User experience flows (happy path AND error path)
+- Technical constraints from the existing codebase
+- Security implications
+- Performance considerations
+
+---
+
+## Required Format
+
+\`\`\`markdown
+# Requirements Document
+
+## Introduction
+
+[Write 3-5 sentences. What is being built? Why is it needed? Who will use it? What problem does it solve?
+Be concrete — reference the actual feature, not generic descriptions.]
+
+## Requirements
+
+### Requirement 1: [Descriptive title for this requirement group]
+
+**User Story:** As a [specific role], I want [specific capability], so that [measurable benefit].
+
+#### Acceptance Criteria
+
+1. WHEN [triggering event or user action] THEN the system SHALL [specific, measurable response]
+2. WHEN [event] AND [precondition] THEN the system SHALL [response]
+3. IF [precondition is true] THEN the system SHALL [response]
+4. IF [error condition] THEN the system SHALL [display/return/handle] [specific error behavior]
+5. WHEN [edge case] THEN the system SHALL [graceful handling]
+
+### Requirement 2: [Next requirement group title]
+
+**User Story:** As a [role], I want [capability], so that [benefit].
+
+#### Acceptance Criteria
+
+1. WHEN [event] THEN the system SHALL [response]
+2. WHEN [event] THEN the system SHALL [response]
+[Continue for all distinct functional areas — aim for 3-6 requirement groups]
+\`\`\`
+
+---
+
+## Writing Rules
+
+1. **Use EARS format exclusively** for acceptance criteria: \`WHEN/THEN SHALL\`, \`IF/THEN SHALL\`, \`WHILE/SHALL\`. Never use "Given/When/Then" or bullet descriptions.
+2. **Each SHALL statement must be testable** — avoid "should work correctly", "should be fast". Use measurable outcomes.
+3. **Cover error cases**: every happy-path requirement needs at least one error/edge-case criterion.
+4. **No placeholders** — every field must contain real, feature-specific content derived from the description.
+5. **Language**: match the description language (Turkish description → Turkish document, English → English).
+6. **Requirements count**: minimum 3 requirement groups, maximum 8. Each group needs minimum 3 acceptance criteria.
+7. **Be specific about roles**: "developer", "admin user", "unauthenticated visitor" — not just "user".
+
+## Save Instructions
+
+After writing the complete document, call:
+\`spec_generate specId="${specId}" phase="requirements" content="<your full markdown here>"\`
+
+Do not summarize or explain — write the full document and save it immediately.`;
+}
+
+function buildDesignPrompt(
+  name: string,
+  specId: string,
+  requirementsContent: string,
+  _designPath: string,
+  archContext: string,
+): string {
+  return `# Feature Spec — Design Phase
+
+You are a senior software architect. The requirements have been approved. Now write a comprehensive technical design document.
+
+## Approved Requirements
+
+\`\`\`markdown
+${requirementsContent.slice(0, 2500)}
+\`\`\`
+${archContext ? `\n## Detected Codebase Patterns\n${archContext}\nAlign your design with these existing patterns.\n` : ''}
+
+---
+
+## Your Task
+
+Before writing, mentally research and consider:
+- How does this feature fit into the existing architecture?
+- What existing code/patterns can be reused vs. what must be created?
+- What are the data flow and state management implications?
+- What are the failure modes and how will they be handled?
+- What is the minimum surface area to implement this correctly?
+
+Then write the complete \`design.md\` document.
+
+---
+
+## Required Format
+
+\`\`\`markdown
+# Design Document: ${name}
+
+> Spec ID: ${specId}
+
+## Overview
+
+[3-5 sentences. What is the high-level approach? Why this architecture? What are the key design decisions?
+Summarize the chosen pattern and explain why it fits this feature better than alternatives.]
+
+## Architecture
+
+[Describe the overall architecture. Include a Mermaid diagram if the data flow is non-trivial.]
+
+\`\`\`mermaid
+graph TD
+    A[Component A] --> B[Service B]
+    B --> C[(Database)]
+    B --> D[Component D]
+\`\`\`
+
+**Pattern:** [e.g., Repository + Service + API Route / React Component + Hook + Server Action / etc.]
+**Layers:** [e.g., Types → Repository → Service → Controller → Client]
+
+Key architectural decisions:
+- [Decision and why it was chosen over alternatives]
+- [Decision and rationale]
+
+## Components and Interfaces
+
+| File Path | Component | Responsibility | Interface |
+|-----------|-----------|----------------|-----------|
+| \`src/types/feature.ts\` | Feature Types | All TypeScript interfaces and enums | Exported types |
+| \`src/lib/feature/repository.ts\` | Feature Repository | Database CRUD, query building | \`FeatureRepository\` interface |
+| \`src/lib/feature/service.ts\` | Feature Service | Business logic, validation, orchestration | \`FeatureService\` interface |
+| \`src/app/api/feature/route.ts\` | API Handler | HTTP parsing, auth check, response shaping | Next.js Route Handler |
+[Use REAL file paths matching the actual codebase structure. Min 3, max 10 components.]
+
+## Data Models
+
+\`\`\`typescript
+// Core entity — all fields derived from requirements
+interface FeatureName {
+  id: string;
+  // --- business fields (feature-specific, not generic) ---
+  // derived from requirements acceptance criteria
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+// Input DTOs
+type CreateFeatureNameInput = Omit<FeatureName, 'id' | 'createdAt' | 'updatedAt'>;
+type UpdateFeatureNameInput = Partial<CreateFeatureNameInput>;
+
+// API response shape (may differ from DB model)
+type FeatureNameResponse = FeatureName & {
+  // any computed/joined fields
+};
+\`\`\`
+
+[Add more interfaces for related entities, enums for status fields, etc.]
+
+## Error Handling
+
+Define how every failure mode is handled:
+
+| Scenario | Error Type | HTTP Status | User-Facing Message | Recovery |
+|----------|-----------|-------------|---------------------|----------|
+| Validation failure | \`ValidationError\` | 400 | Field-specific error messages | Fix input and retry |
+| Not found | \`NotFoundError\` | 404 | "Resource not found" | Redirect or show empty state |
+| Unauthorized | \`AuthError\` | 401 | "Authentication required" | Redirect to login |
+| Forbidden | \`PermissionError\` | 403 | "Insufficient permissions" | Show permission error |
+| Conflict | \`ConflictError\` | 409 | Specific conflict description | Resolve conflict |
+| Server error | \`InternalError\` | 500 | Generic "Something went wrong" | Retry or contact support |
+
+Error propagation strategy: [describe how errors bubble up from repository → service → handler]
+
+## Testing Strategy
+
+### Unit Tests
+- \`src/lib/feature/service.test.ts\` — business logic, validation rules, edge cases
+- \`src/lib/feature/repository.test.ts\` — DB query correctness (mock DB or test DB)
+
+### Integration Tests
+- \`src/app/api/feature/route.test.ts\` — full request/response cycle with test DB
+
+### Test Cases to Cover
+1. Happy path for each CRUD operation
+2. Validation failures (missing fields, invalid formats, boundary values)
+3. Auth/permission enforcement
+4. Concurrent operations / race conditions (if applicable)
+5. Error propagation from repository to HTTP response
+
+**Testing approach:** [TDD / test-after / e2e only — choose one and justify]
+
+## Open Questions
+
+- [Unresolved technical decision that blocks implementation]
+- [Dependency on another team or external system]
+- [Performance/scalability concern that needs measurement]
+\`\`\`
+
+---
+
+## Writing Rules
+
+1. **All file paths must be real** — match the actual codebase structure detected above.
+2. **TypeScript interfaces must reflect requirements** — include every field mentioned in acceptance criteria.
+3. **Error Handling section is mandatory** — do not omit or write "standard error handling".
+4. **Testing Strategy section is mandatory** — name specific test files and test cases.
+5. **Mermaid diagram** — include one if architecture has more than 2 components interacting.
+6. **Design decisions must cite tradeoffs** — "we chose X over Y because Z".
+7. **No placeholders** — every section must contain real, feature-specific content.
+
+## Save Instructions
+
+After writing the complete document, call:
+\`spec_generate specId="${specId}" phase="design" content="<your full markdown here>"\`
+
+Do not summarize or explain — write the full document and save it immediately.`;
+}
+
+function buildTasksPrompt(
+  name: string,
+  specId: string,
+  requirementsContent: string,
+  designContent: string,
+  _tasksPath: string,
+): string {
+  return `# Feature Spec — Implementation Plan Phase
+
+You are a senior software engineer converting an approved design into an actionable implementation plan for a code-generation agent.
+
+## Approved Requirements
+
+\`\`\`markdown
+${requirementsContent.slice(0, 1400)}
+\`\`\`
+${designContent ? `\n## Approved Design\n\`\`\`markdown\n${designContent.slice(0, 1400)}\n\`\`\`` : ''}
+
+---
+
+## Your Task
+
+Convert the feature design into a series of **prompts for a code-generation LLM** that will implement each step in a test-driven manner.
+
+Core principle: **incremental progress with early validation**. Each task must:
+- Build on the previous task's output
+- Be verifiable (has a test or observable output)
+- Leave no orphaned code — everything gets wired up by the end
+
+---
+
+## Required Format
+
+\`\`\`markdown
+# Implementation Plan: ${name}
+
+> Spec ID: ${specId}
+
+---
+
+- [ ] 1. Set up types and project structure
+  - Create \`src/types/feature.ts\` with all TypeScript interfaces from the design
+  - Define \`FeatureName\`, \`CreateFeatureNameInput\`, \`UpdateFeatureNameInput\` interfaces
+  - Export all types — no implementation yet, just contracts
+  - _Requirements: 1.1, 1.2_
+
+- [ ] 2. Implement data layer
+  - [ ] 2.1 Create repository with database operations
+    - Implement \`src/lib/feature/repository.ts\` with \`create\`, \`findById\`, \`findAll\`, \`update\`, \`delete\` methods
+    - Use existing ORM/DB pattern from codebase (match existing repository files)
+    - Write unit tests in \`src/lib/feature/repository.test.ts\` covering happy path and not-found cases
+    - _Requirements: 2.1, 2.2_
+
+  - [ ] 2.2 Add validation layer
+    - Implement input validation using existing validation library (Zod/class-validator/etc.)
+    - Cover all acceptance criteria constraints (required fields, format rules, length limits)
+    - Write unit tests for each validation rule — valid and invalid inputs
+    - _Requirements: 2.3, 3.1_
+
+- [ ] 3. Implement business logic
+  - [ ] 3.1 Create service layer
+    - Implement \`src/lib/feature/service.ts\` calling repository methods
+    - Add business rules: [specific rules from requirements]
+    - Implement error handling per the design's error table (ValidationError, NotFoundError, etc.)
+    - Write unit tests mocking the repository, covering each business rule
+    - _Requirements: 3.1, 3.2, 3.3_
+
+  - [ ] 3.2 Wire service to existing auth/permission system
+    - Add permission checks matching existing auth pattern
+    - Test: authorized user can proceed, unauthorized gets 401/403
+    - _Requirements: 4.1_
+
+- [ ] 4. Implement API/interface layer
+  - [ ] 4.1 Create API route handler
+    - Implement \`src/app/api/feature/route.ts\` (or equivalent)
+    - Parse and validate request body, call service, shape response
+    - Match existing API response format in the codebase
+    - _Requirements: 1.1, 2.1_
+
+  - [ ] 4.2 Integration test the full request/response cycle
+    - Write integration tests hitting the actual handler with a test database
+    - Cover: success case, validation error (400), not found (404), auth error (401)
+    - _Requirements: 1.1, 1.2, 2.1, 3.1_
+
+- [ ] 5. Implement UI (if applicable)
+  - [ ] 5.1 Create data-fetching hook
+    - Implement \`src/hooks/use-feature.ts\` with loading/error/data states
+    - _Requirements: 1.1_
+
+  - [ ] 5.2 Build form component
+    - Implement form with validation feedback matching design wireframes
+    - Connect to hook — no mock data
+    - _Requirements: 1.2, 2.3_
+
+- [ ] 6. End-to-end wiring and final tests
+  - Connect all components: UI → hook → API → service → repository
+  - Write E2E test or manual test checklist covering the primary user journey
+  - Verify all acceptance criteria from requirements.md are covered by at least one test
+  - _Requirements: all_
+\`\`\`
+
+---
+
+## Task Generation Rules
+
+1. **Checkbox format only** — every item must be \`- [ ] N.\` or \`- [ ] N.M\` (decimal sub-tasks).
+2. **Each task = one coding concern** — "implement feature" is not a task. "implement repository.ts CRUD methods" is.
+3. **Test-driven sequence**: for each implementation task, the test comes in the same task or immediately after.
+4. **Requirements traceability**: every task ends with \`_Requirements: X.X, Y.Y_\` citing the specific criteria it satisfies.
+5. **No orphaned code**: if you create a repository in task 2.1, it must be called by something before the plan ends.
+6. **Incremental complexity**: no big jumps. Each task should be completable in 1-4 hours by a skilled developer.
+7. **Max 2 hierarchy levels**: top-level tasks (epics) and sub-tasks only. No deeper nesting.
+8. **Only coding tasks** — explicitly DO NOT include:
+   - Deployment to staging/production
+   - Performance metrics gathering or load testing
+   - User acceptance testing or user feedback sessions
+   - Documentation writing (unless it's code comments/JSDoc)
+   - Business process changes
+
+## Save Instructions
+
+After writing the complete implementation plan, call:
+\`spec_generate specId="${specId}" phase="tasks" content="<your full markdown here>"\`
+
+Do not summarize or explain — write the full plan and save it immediately.`;
+}
 
 // ─── Start server ─────────────────────────────────────────────────────────────
 async function main() {
