@@ -18,30 +18,38 @@ export async function runAgentLoop(
   const stepResults: AgentLoopResult['steps'] = [];
   const totalStart = Date.now();
 
-  const sorted = topologicalSort(steps);
+  const levels = buildLevels(steps).map(level => level.slice(0, maxSteps));
+  let remaining = maxSteps;
 
-  for (const step of sorted.slice(0, maxSteps)) {
-    const start = Date.now();
-    try {
-      // Inject context from dependencies
-      const depContext = step.dependsOn
-        .map(id => results.get(id))
-        .filter(Boolean)
-        .join('\n\n---\n\n');
+  for (const level of levels) {
+    if (remaining <= 0) break;
+    const batch = level.slice(0, remaining);
+    remaining -= batch.length;
 
-      const args = depContext
-        ? { ...step.args, _previousContext: depContext.slice(0, 2000) }
-        : step.args;
+    await Promise.all(
+      batch.map(async step => {
+        const start = Date.now();
+        try {
+          const depContext = step.dependsOn
+            .map(id => results.get(id))
+            .filter(Boolean)
+            .join('\n\n---\n\n');
 
-      const result = await executor(step.tool, args);
-      results.set(step.id, result);
-      stepResults.push({ step, result, duration: Date.now() - start });
-      opts.onStepComplete?.(step, result);
-    } catch (e) {
-      const error = e instanceof Error ? e.message : String(e);
-      stepResults.push({ step, result: '', duration: Date.now() - start, error });
-      results.set(step.id, `ERROR: ${error}`);
-    }
+          const args = depContext
+            ? { ...step.args, _previousContext: depContext.slice(0, 2000) }
+            : step.args;
+
+          const result = await executor(step.tool, args);
+          results.set(step.id, result);
+          stepResults.push({ step, result, duration: Date.now() - start });
+          opts.onStepComplete?.(step, result);
+        } catch (e) {
+          const error = e instanceof Error ? e.message : String(e);
+          stepResults.push({ step, result: '', duration: Date.now() - start, error });
+          results.set(step.id, `ERROR: ${error}`);
+        }
+      }),
+    );
   }
 
   const finalOutput = buildFinalOutput(stepResults);
@@ -55,23 +63,29 @@ export async function runAgentLoop(
   };
 }
 
-function topologicalSort(steps: AgentStep[]): AgentStep[] {
-  const sorted: AgentStep[] = [];
-  const visited = new Set<string>();
+/** Groups steps into parallel levels: level 0 has no deps, level N deps only on levels < N */
+function buildLevels(steps: AgentStep[]): AgentStep[][] {
+  const levelMap = new Map<string, number>();
   const stepMap = new Map(steps.map(s => [s.id, s]));
 
-  function visit(step: AgentStep) {
-    if (visited.has(step.id)) return;
-    visited.add(step.id);
-    for (const depId of step.dependsOn) {
-      const dep = stepMap.get(depId);
-      if (dep) visit(dep);
-    }
-    sorted.push(step);
+  function getLevel(step: AgentStep): number {
+    if (levelMap.has(step.id)) return levelMap.get(step.id)!;
+    const level = step.dependsOn.length === 0
+      ? 0
+      : 1 + Math.max(...step.dependsOn.map(id => {
+          const dep = stepMap.get(id);
+          return dep ? getLevel(dep) : 0;
+        }));
+    levelMap.set(step.id, level);
+    return level;
   }
 
-  for (const step of steps) visit(step);
-  return sorted;
+  for (const step of steps) getLevel(step);
+
+  const maxLevel = Math.max(...levelMap.values(), 0);
+  const levels: AgentStep[][] = Array.from({ length: maxLevel + 1 }, () => []);
+  for (const step of steps) levels[levelMap.get(step.id)!].push(step);
+  return levels;
 }
 
 function buildFinalOutput(results: AgentLoopResult['steps']): string {
