@@ -42,3 +42,12 @@ Performs automated code quality review covering:
 run_skill("code-review", { path: "src/" })
 run_skill("code-review", { filepath: "src/index.ts" })
 ```
+
+## Output Depth
+
+| Parameter | Behavior |
+|-----------|----------|
+| `depth: shallow` (default) | Summary: issue count, top 3 findings, recommendations |
+| `depth: deep` | Full analysis: every finding with code excerpt, detailed fix steps, related CWE/OWASP refs |
+
+To save output as .md file: `run_skill skill="code-review" path="src/" depth="deep" save=true`

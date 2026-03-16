@@ -9,90 +9,125 @@ export function buildOrchestratorPrompt(
   recentEvents: OrchEvent[],
 ): string {
   const doneSteps = session.steps.filter(s => s.status === 'done');
+  const failedSteps = session.steps.filter(s => s.status === 'failed');
   const pendingSteps = session.steps.filter(s => s.status === 'pending');
   const currentStep = session.steps[session.currentStepIdx] ?? session.steps.find(s => s.status === 'pending') ?? null;
   const total = session.steps.length;
   const done = doneSteps.length;
 
-  const contextSnippet = session.context.length > 1500
-    ? session.context.slice(session.context.length - 1500)
+  const contextSnippet = session.context.length > 2000
+    ? session.context.slice(session.context.length - 2000)
     : session.context;
 
-  const completedList = doneSteps.length > 0
-    ? doneSteps.map(s => `- ✅ [${s.order}] ${s.description} (\`${s.tool}\`)`).join('\n')
-    : '_(none yet)_';
-
-  const pendingList = pendingSteps.length > 0
-    ? pendingSteps
-        .filter(s => s.id !== currentStep?.id)
-        .map(s => `- ⏳ [${s.order}] ${s.description} (\`${s.tool}\`)`)
-        .join('\n') || '_(none)_'
-    : '_(none)_';
-
-  const tasksCreatedList = session.tasksCreated.length > 0
-    ? session.tasksCreated.map(id => `- ${id}`).join('\n')
-    : '_(none)_';
-
-  const pendingProjectTasks = pendingTasks
-    .slice(0, 5)
-    .map(t => `- [${t.priority.toUpperCase()}] ${t.category}/${t.title}${t.filepath ? ` — ${t.filepath}${t.startLine ? `:${t.startLine}` : ''}` : ''}`)
-    .join('\n') || '_(none)_';
+  // ── Current step block ───────────────────────────────────────────────────
 
   const currentStepBlock = currentStep
-    ? `## Current Step → ${currentStep.description}
-Tool: \`${currentStep.tool}\`
-Args: \`\`\`json
+    ? `## ⚡ EXECUTE NOW — Step ${currentStep.order} of ${total}
+
+**Tool:** \`${currentStep.tool}\`
+**Args:**
+\`\`\`json
 ${JSON.stringify(currentStep.args, null, 2)}
 \`\`\`
-${currentStep.miniPrompt ? `\n### Mini-Prompt\n${currentStep.miniPrompt}\n` : ''}`
-    : '## Current Step → _(all steps complete — call `orch_end`)_';
+**Why:** ${currentStep.description}
+
+${currentStep.miniPrompt ? currentStep.miniPrompt : '_No additional instructions for this step._'}`
+    : `## ⚡ EXECUTE NOW
+
+_(All steps complete — call \`orch_end sessionId="${session.id}"\` immediately.)_`;
+
+  // ── Completed steps ──────────────────────────────────────────────────────
+
+  const completedList = doneSteps.length > 0
+    ? doneSteps.map(s => {
+        const resultSnippet = s.result ? `: ${s.result.slice(0, 200)}${s.result.length > 200 ? '…' : ''}` : '';
+        return `- ✅ **[${s.order}]** \`${s.tool}\` — ${s.description}${resultSnippet}`;
+      }).join('\n')
+    : '_(none yet)_';
+
+  const failedList = failedSteps.length > 0
+    ? failedSteps.map(s => `- ❌ **[${s.order}]** \`${s.tool}\` — ${s.description}: ${s.result?.slice(0, 120) ?? 'unknown error'}`).join('\n')
+    : '';
+
+  // ── Upcoming steps ───────────────────────────────────────────────────────
+
+  const upcomingList = pendingSteps
+    .filter(s => s.id !== currentStep?.id)
+    .map(s => `- ⏳ **[${s.order}]** \`${s.tool}\` — ${s.description}${s.miniPrompt ? '\n  > ' + s.miniPrompt.split('\n')[0] : ''}`)
+    .join('\n') || '_(none)_';
+
+  // ── Tasks created this session ───────────────────────────────────────────
+
+  const tasksCreatedList = session.tasksCreated.length > 0
+    ? session.tasksCreated.map(id => `- \`${id}\``).join('\n')
+    : '_(none)_';
+
+  // ── Pending project tasks ────────────────────────────────────────────────
+
+  const inProgressCount = pendingTasks.filter(t => t.status === 'in-progress').length;
+  const blockedCount = pendingTasks.filter(t => t.status === 'blocked').length;
+  const pendingCount = pendingTasks.filter(t => t.status === 'pending').length;
+
+  // ── Recent events ────────────────────────────────────────────────────────
 
   const recentEventsBlock = recentEvents.length > 0
     ? recentEvents
-        .slice(-5)
-        .map(e => `- [${new Date(e.timestamp).toISOString()}] ${e.type}${e.tool ? ` (${e.tool})` : ''}${e.result ? `: ${e.result.slice(0, 120)}` : ''}`)
+        .slice(-8)
+        .map(e => {
+          const ts = new Date(e.timestamp).toISOString().slice(11, 19);
+          const resultSnippet = e.result ? `: ${e.result.slice(0, 150)}` : '';
+          return `- \`${ts}\` **${e.type}**${e.tool ? ` (${e.tool})` : ''}${resultSnippet}`;
+        })
         .join('\n')
     : '_(no events yet)_';
 
-  return `# Orchestrator Brain — Active Session
+  return `# 🎯 Orchestrator — Active Session
+**Intent:** ${session.intent}
+**Session:** \`${session.id}\` | **Strategy:** ${session.strategy} | **Status:** ${session.status}
 
-## Session ID
-\`${session.id}\`
-
-## Intent
-${session.intent}
-
-## Strategy: ${session.strategy}
-
-## Progress: ${done}/${total} steps completed
-
-## Completed Steps
-${completedList}
+---
 
 ${currentStepBlock}
 
-## Pending Steps
-${pendingList}
+---
 
-## Context Accumulated
-${contextSnippet || '_(empty)_'}
+## ✅ Completed Steps (${done}/${total})
+${completedList}
+${failedList ? `\n**Failed:**\n${failedList}` : ''}
 
-## Tasks Created This Session (${session.tasksCreated.length})
+## ⏳ Upcoming Steps
+${upcomingList}
+
+## 📋 Tasks Created This Session (${session.tasksCreated.length})
 ${tasksCreatedList}
 
-## Pending Project Tasks (${pendingTasks.length})
-${pendingProjectTasks}
+## 🧠 Context Accumulated
+${contextSnippet || '_(empty)_'}
 
-## Recent Events
+## 📊 Project State
+**Pending tasks:** ${pendingCount} | **In progress:** ${inProgressCount} | **Blocked:** ${blockedCount}
+
+## 🕐 Recent Events
 ${recentEventsBlock}
 
-## RULES — FOLLOW EXACTLY
-1. Execute the Current Step NOW using the tool shown
-2. After each tool call, call \`orch_report\` with the result
-3. Do NOT skip steps or change order
-4. Do NOT create tasks manually — use \`orch_report\` with type="task" to let orchestrator create them properly
-5. If blocked: call \`orch_report\` with type="blocked" and reason
-6. When all steps done: call \`orch_end\`
+---
+
+## ⚠️ STRICT RULES
+1. **Execute the "EXECUTE NOW" step IMMEDIATELY** — do not ask for confirmation, do not pause
+2. **After EVERY tool call:** call \`orch_report sessionId="${session.id}" type="step_complete" result="<summary of what you found>"\` — the summary must be meaningful (not just "done")
+3. **Creating a task:** call \`orch_report type="task" taskData={...}\` — never call \`task_create\` directly
+4. **Blocked?** call \`orch_report type="blocked" error="<specific reason why you cannot proceed>"\`
+5. **ALL steps done?** call \`orch_end sessionId="${session.id}"\` — do not stop without calling this
+6. **Never repeat a failed step** — report it as blocked and move on
+7. **Never stop and ask** "should I continue?" — continue autonomously until all steps are done or session is ended
+8. **Result summaries must be detailed** — include counts, file paths, key findings — not just "success"
+
+## 🔧 Failure Recovery
+If the current step fails or returns an error:
+1. Log it immediately: \`orch_report sessionId="${session.id}" type="error" result="<exact error message>"\`
+2. Try once more with adjusted args (e.g. narrower path, different query)
+3. On second failure: \`orch_report sessionId="${session.id}" type="blocked" error="<what failed and why — be specific>"\`
+4. Then continue to the next pending step — do not halt the session
 `;
 }
 
@@ -111,11 +146,16 @@ You are executing step [${step.order}] of an orchestrated session.
 ${JSON.stringify(step.args, null, 2)}
 \`\`\`
 
+**Goal:** Complete this step and produce a detailed result summary.
+**Expected output:** Specific findings — file paths, counts, issues found, code snippets — not generic confirmations.
+
 ${step.miniPrompt ? `**Additional Instructions:**\n${step.miniPrompt}\n` : ''}
 ${contextSnippet ? `**Accumulated Context (last 800 chars):**\n${contextSnippet}\n` : ''}
 After calling the tool, immediately report back using \`orch_report\` with:
 - type: "step_complete"
 - tool: "${step.tool}"
-- result: the tool output summary (max 500 chars)
+- result: detailed summary of what the tool returned (include key findings, paths, counts — max 500 chars)
+
+**On failure:** use type="error" and include the exact error message in result.
 `;
 }

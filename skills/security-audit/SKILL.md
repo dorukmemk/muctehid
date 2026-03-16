@@ -59,3 +59,12 @@ Scans for AWS keys, GitHub tokens, Stripe keys, JWT tokens, SSH private keys, an
 run_skill("security-audit", { path: "src/" })
 run_skill("security-audit", { filepath: "src/auth.ts" })
 ```
+
+## Output Depth
+
+| Parameter | Behavior |
+|-----------|----------|
+| `depth: shallow` (default) | Summary: issue count, top 3 findings, recommendations |
+| `depth: deep` | Full analysis: every finding with code excerpt, detailed fix steps, related CWE/OWASP refs |
+
+To save output as .md file: `run_skill skill="security-audit" path="src/" depth="deep" save=true`

@@ -24,7 +24,7 @@ export class CodeMemory {
     return new CodeMemory(dataDir);
   }
 
-  async indexDirectory(dirPath: string, opts: IndexOptions = {}): Promise<{ indexed: number; skipped: number; errors: number }> {
+  async indexDirectory(dirPath: string, opts: IndexOptions = {}): Promise<{ indexed: number; updated: number; skipped: number; errors: number }> {
     const exclude = opts.exclude ?? ['node_modules', 'dist', '.git', '.audit-data'];
     const chunkSize = opts.chunkSize ?? 150;
     const overlap = opts.overlap ?? 20;
@@ -37,7 +37,7 @@ export class CodeMemory {
       ignore: exclude.map(p => `**/${p}/**`),
     });
 
-    let indexed = 0, skipped = 0, errors = 0;
+    let indexed = 0, updated = 0, skipped = 0, errors = 0;
 
     for (const file of files) {
       if (shouldSkip(file, exclude)) { skipped++; continue; }
@@ -48,6 +48,19 @@ export class CodeMemory {
 
         const chunks = chunkFile(file, chunkSize, overlap);
         if (chunks.length === 0) { skipped++; continue; }
+
+        // Incremental indexing: skip unchanged files
+        const stored = this.sqlite.getFileMeta(file);
+        if (stored && stored.lastModified >= stat.mtimeMs) {
+          skipped++;
+          continue;
+        }
+
+        // File is new or changed — delete old chunks before re-indexing
+        const isUpdate = stored !== null;
+        if (isUpdate) {
+          this.sqlite.deleteByFilepath(file);
+        }
 
         for (const raw of chunks) {
           const id = makeChunkId(raw.filepath, raw.startLine);
@@ -76,13 +89,18 @@ export class CodeMemory {
             }
           }
         }
-        indexed++;
+
+        if (isUpdate) {
+          updated++;
+        } else {
+          indexed++;
+        }
       } catch {
         errors++;
       }
     }
 
-    return { indexed, skipped, errors };
+    return { indexed, updated, skipped, errors };
   }
 
   async search(query: string, opts: SearchOptions = {}): Promise<SearchResult[]> {

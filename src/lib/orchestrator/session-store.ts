@@ -123,7 +123,7 @@ export class SessionStore {
     const session = this.getSession(sessionId);
     if (!session) return;
     const combined = session.context + (session.context ? '\n' : '') + text;
-    // Trim to last 4000 chars
+    // Keep the LAST 4000 chars — most recent context is most valuable
     const trimmed = combined.length > 4000 ? combined.slice(combined.length - 4000) : combined;
     const now = Date.now();
     this.db.prepare('UPDATE orch_sessions SET context = ?, updated_at = ? WHERE id = ?')
@@ -180,6 +180,21 @@ export class SessionStore {
   }
 
   getEvents(sessionId: string, limit = 20): OrchEvent[] {
+    const rows = this.db.prepare(
+      'SELECT * FROM orch_events WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?'
+    ).all(sessionId, limit) as Record<string, unknown>[];
+    return rows.reverse().map(r => ({
+      id: r.id as string,
+      sessionId: r.session_id as string,
+      type: r.type as OrchEvent['type'],
+      tool: r.tool as string | undefined,
+      args: r.args_json as string | undefined,
+      result: r.result as string | undefined,
+      timestamp: r.timestamp as number,
+    }));
+  }
+
+  getRecentEvents(sessionId: string, limit: number): OrchEvent[] {
     const rows = this.db.prepare(
       'SELECT * FROM orch_events WHERE session_id = ? ORDER BY timestamp DESC LIMIT ?'
     ).all(sessionId, limit) as Record<string, unknown>[];

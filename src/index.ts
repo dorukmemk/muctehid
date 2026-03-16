@@ -29,6 +29,7 @@ import { TaskPriority, TaskCategory, TaskStatus } from './types/v2.js';
 import { SessionStore } from './lib/orchestrator/session-store.js';
 import { Conductor } from './lib/orchestrator/conductor.js';
 import { handleOrchestratorTool, ORCHESTRATOR_TOOL_NAMES, ORCHESTRATOR_TOOL_DEFS } from './tools/orchestrator.js';
+import { buildReport, saveReport } from './lib/reporter/deep-reporter.js';
 
 // ─── Collect files (single file or recursive dir walk) ────────────────────────
 function collectFiles(target: string, extensions: string[]): string[] {
@@ -155,7 +156,7 @@ const TOOLS = [
   { name: 'health_score', description: 'Use at the start of a session, when user asks "how is the codebase", or for a project overview. Returns 0-100 score across security/quality/docs/tests/deps.', inputSchema: { type: 'object', properties: { path: { type: 'string' } } } },
   // ── Skills (6) ────────────────────────────────────────────────────────────
   { name: 'list_skills', description: 'Use when unsure which skill to run, or when user asks what capabilities are available.', inputSchema: { type: 'object', properties: {} } },
-  { name: 'run_skill', description: 'Use when user asks for: "security audit" → security-audit, "code review" → code-review, "refactor" → refactor-planner, "write tests" → test-generator, "document this" → doc-generator, "plan feature" → feature-planner, "report bug" → bug-reporter, "deep analysis" → deep-dive, "full audit" → audit-runner.', inputSchema: { type: 'object', required: ['skill'], properties: { skill: { type: 'string' }, path: { type: 'string' }, filepath: { type: 'string' } } } },
+  { name: 'run_skill', description: 'Use when user asks for: "security audit" → security-audit, "code review" → code-review, "refactor" → refactor-planner, "write tests" → test-generator, "document this" → doc-generator, "plan feature" → feature-planner, "report bug" → bug-reporter, "deep analysis" → deep-dive, "full audit" → audit-runner.', inputSchema: { type: 'object', required: ['skill'], properties: { skill: { type: 'string' }, path: { type: 'string' }, filepath: { type: 'string' }, depth: { type: 'string', enum: ['shallow', 'deep'], description: 'shallow=summary (default), deep=full analysis with code excerpts' }, save: { type: 'boolean', description: 'If true, save skill output as .md file to .audit-data/reports/' } } } },
   { name: 'install_skill', description: 'Use when user wants to add a custom skill from a local directory.', inputSchema: { type: 'object', required: ['path'], properties: { path: { type: 'string' } } } },
   { name: 'remove_skill', description: 'Use when user wants to uninstall a previously installed skill.', inputSchema: { type: 'object', required: ['skill'], properties: { skill: { type: 'string' } } } },
   { name: 'skill_info', description: 'Use to see what a specific skill does, its steps, and expected output before running it.', inputSchema: { type: 'object', required: ['skill'], properties: { skill: { type: 'string' } } } },
@@ -167,7 +168,7 @@ const TOOLS = [
   { name: 'commit_history_search', description: 'Use when user asks "when was this added", "find commits about X", or to understand when a bug was introduced.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, limit: { type: 'number' } } } },
   { name: 'install_hooks', description: 'Use once during project setup to add pre-commit security gates.', inputSchema: { type: 'object', properties: { preCommit: { type: 'boolean' }, prePush: { type: 'boolean' } } } },
   // ── Reports (3) ───────────────────────────────────────────────────────────
-  { name: 'generate_report', description: 'Use when user asks for a full project audit, status report, or before a release/review.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'generate_report', description: 'Use when user asks for a full project audit, status report, or before a release/review.', inputSchema: { type: 'object', properties: { save: { type: 'boolean', description: 'If true, write report to .audit-data/reports/ as .md file' }, depth: { type: 'string', enum: ['shallow', 'deep'], description: 'shallow=summary, deep=full analysis with code excerpts' } } } },
   { name: 'export_report', description: 'Use when user wants to share the audit report as markdown, JSON, or HTML.', inputSchema: { type: 'object', required: ['id'], properties: { id: { type: 'string' }, format: { type: 'string', enum: ['markdown', 'json', 'html'] } } } },
   { name: 'compare_reports', description: 'Use when user asks "has the code quality improved", "compare before/after refactor", or tracking progress over time.', inputSchema: { type: 'object', required: ['id1', 'id2'], properties: { id1: { type: 'string' }, id2: { type: 'string' } } } },
   // ── Context (2) ───────────────────────────────────────────────────────────
@@ -193,6 +194,7 @@ const TOOLS = [
   { name: 'task_timeline', description: 'Use to see the full history of a task — when it was created, started, updated.', inputSchema: { type: 'object', required: ['taskId'], properties: { taskId: { type: 'string' } } } },
   { name: 'task_next', description: 'Use at the start of a work session to find what to work on next. Returns tasks whose dependencies are all done.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
   { name: 'task_progress', description: 'Use when user asks "how much is done", "project status", or for a sprint summary.', inputSchema: { type: 'object', properties: { specId: { type: 'string' } } } },
+  { name: 'task_board', description: 'Use to see visual kanban board of all tasks with progress. Always call after task_create or task_update to confirm changes.', inputSchema: { type: 'object', properties: {} } },
 
   // ── Research (2) ──────────────────────────────────────────────────────────
   { name: 'research_topic', description: 'Use BEFORE answering questions about how the codebase works — searches memory and verifies findings to avoid hallucination. Use when asked "how does X work", "explain Y", "why does Z happen".', inputSchema: { type: 'object', required: ['topic'], properties: { topic: { type: 'string' }, depth: { type: 'string', enum: ['quick', 'standard', 'deep'] } } } },
@@ -220,7 +222,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const targetPath = (args.path as string) ?? REPO_ROOT;
           const mode = (args.mode as 'bm25' | 'vector' | 'hybrid') ?? 'hybrid';
           const result = await mem.indexDirectory(targetPath, { mode, exclude: config.memory.exclude });
-          text = `✅ Indexing complete!\n- Indexed: ${result.indexed} files\n- Skipped: ${result.skipped} files\n- Errors: ${result.errors}`;
+          text = `✅ Indexing complete!\n- New: ${result.indexed} files\n- Updated: ${result.updated} files\n- Skipped (unchanged): ${result.skipped} files\n- Errors: ${result.errors}`;
           break;
         }
         case 'search_code': {
@@ -268,6 +270,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     else if (name === 'audit_file') {
       const result = auditFile(args.filepath as string);
       text = result.markdown;
+      text += `\n\n---\n> 💾 Detaylı rapor için: \`generate_report filepath="${args.filepath as string}" save=true\``;
     }
     else if (name === 'audit_diff') {
       text = await gitTools.handleTool('git_diff_audit', args);
@@ -282,6 +285,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       text = `## Security Scan: ${target}\n\n**Files scanned:** ${files.length} | **Issues:** ${allIssues.length}\n\n` +
         (allIssues.length === 0 ? '✅ No issues found.' :
           allIssues.map(i => `- [${i.severity.toUpperCase()}] **${i.title}** \`${path.relative(process.cwd(), i.filepath)}:${i.line}\``).join('\n'));
+      text += `\n\n---\n> 💾 Detaylı rapor için: \`generate_report save=true\``;
     }
     else if (name === 'find_secrets') {
       const target = args.path as string;
@@ -318,11 +322,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
     else if (name === 'health_score') {
       text = await getHealthScore(REPO_ROOT);
+      text += `\n\n> Detaylı rapor için \`generate_report save=true\` çağırın`;
     }
 
     // ── Skills tools ──────────────────────────────────────────────────────────
     else if (['list_skills', 'run_skill', 'install_skill', 'remove_skill', 'skill_info', 'create_skill'].includes(name)) {
       text = await skillsManager.handleTool(name, args);
+      if (name === 'run_skill') {
+        const skillName = args.skill as string;
+        const depth = args.depth as string | undefined;
+        const save = args.save === true || args.save === 'true';
+        if (save) {
+          const reportName = `skill_${skillName}`;
+          const savedPath = saveReport(text, AUDIT_DATA_DIR, reportName);
+          text = `✅ Rapor kaydedildi: \`${savedPath}\`\n\n${text}`;
+        } else {
+          const targetHint = (args.filepath as string) ?? (args.path as string) ?? '';
+          const depthHint = depth === 'deep' ? ' depth="deep"' : '';
+          text += `\n\n---\n> 💾 Detaylı rapor için: \`run_skill skill="${skillName}"${targetHint ? ` path="${targetHint}"` : ''}${depthHint} save=true\``;
+        }
+      }
     }
 
     // ── Git tools ─────────────────────────────────────────────────────────────
@@ -332,7 +351,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     // ── Report tools ──────────────────────────────────────────────────────────
     else if (['generate_report', 'export_report', 'compare_reports'].includes(name)) {
-      text = await reportTools.handleTool(name, args);
+      if (name === 'generate_report') {
+        const save = args.save === true || args.save === 'true';
+        const depth = (args.depth as string) ?? 'shallow';
+        // Get the base report content from reportTools
+        const baseReport = await reportTools.handleTool('generate_report', args);
+        if (save) {
+          const reportContent = buildReport({
+            title: 'Code Audit Report',
+            metadata: {
+              Depth: depth,
+              'Repo Root': REPO_ROOT,
+            },
+            sections: [
+              {
+                heading: 'Audit Results',
+                content: baseReport,
+                level: 2,
+              },
+            ],
+          });
+          const savedPath = saveReport(reportContent, AUDIT_DATA_DIR, 'audit');
+          text = `✅ Rapor kaydedildi: \`${savedPath}\`\n\n${reportContent}`;
+        } else {
+          text = baseReport;
+          text += `\n\n---\n> 💾 Raporu kaydetmek için: \`generate_report save=true\``;
+        }
+      } else {
+        text = await reportTools.handleTool(name, args);
+      }
     }
 
     // ── Context tools ─────────────────────────────────────────────────────────
@@ -508,6 +555,66 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         `- **Bekliyor:** ${pending.length}\n` +
         `- **Bloklandı:** ${blocked.length}\n` +
         `- **Kalan tahmini:** ${remaining.toFixed(1)}h`;
+    }
+
+    else if (name === 'task_board') {
+      const allTasks = taskStore.list();
+      const groups: Record<string, typeof allTasks> = {
+        'in-progress': [],
+        pending: [],
+        done: [],
+        blocked: [],
+        cancelled: [],
+      };
+      for (const t of allTasks) {
+        (groups[t.status] ?? groups['pending']).push(t);
+      }
+
+      // Sort pending by priority
+      const prioOrder: Record<string, number> = { critical: 0, high: 1, medium: 2, low: 3 };
+      groups['pending'].sort((a, b) => (prioOrder[a.priority] ?? 2) - (prioOrder[b.priority] ?? 2));
+
+      const active = allTasks.filter(t => t.status !== 'cancelled');
+      const doneCount = groups['done'].length;
+      const total = active.length;
+      const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+      const filled = Math.round(pct / 10);
+      const bar = '█'.repeat(filled) + '░'.repeat(10 - filled);
+
+      const fmtTask = (t: (typeof allTasks)[number]) => {
+        const loc = t.filepath ? ` — ${t.filepath}` : '';
+        const mini = t.miniPrompt ? `\n  Mini-prompt: ${t.miniPrompt}` : '';
+        return `- [${t.id}] **${t.title}** \`${t.category}\` \`${t.priority}\`${loc}${mini}`;
+      };
+
+      const section = (emoji: string, label: string, items: typeof allTasks) => {
+        if (items.length === 0) return `## ${emoji} ${label} (0)`;
+        return `## ${emoji} ${label} (${items.length})\n${items.map(fmtTask).join('\n')}`;
+      };
+
+      const nextTask = groups['in-progress'][0] ?? groups['pending'][0];
+      const nextHint = nextTask
+        ? `\`task_update id="${nextTask.id}" status="done"\` to complete current task`
+        : 'All tasks complete!';
+
+      text = [
+        '# Task Board',
+        '',
+        `## Progress: ${doneCount}/${total} (${pct}%) ${bar}`,
+        '',
+        section('🔄', 'In Progress', groups['in-progress']),
+        '',
+        section('⏳', 'Pending', groups['pending']) + (groups['pending'].length > 0 ? ' — sorted by priority' : ''),
+        '',
+        section('✅', 'Done', groups['done']),
+        '',
+        section('🚫', 'Blocked', groups['blocked']),
+        '',
+        section('❌', 'Cancelled', groups['cancelled']),
+        '',
+        '---',
+        `Next: ${nextHint}`,
+      ].join('\n');
     }
 
     // ── Research tools ────────────────────────────────────────────────────────

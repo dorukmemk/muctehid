@@ -138,6 +138,13 @@ export class SQLiteStore {
     return rows.map(r => this.rowToChunk(r));
   }
 
+  getFileMeta(filepath: string): { lastModified: number } | null {
+    const row = this.db.prepare(
+      'SELECT MAX(last_modified) as lm FROM chunks WHERE filepath = ?'
+    ).get(filepath) as { lm: number } | undefined;
+    return (row && row.lm) ? { lastModified: row.lm } : null;
+  }
+
   stats(): { chunks: number; files: number; dbSize: number } {
     const chunks = (this.db.prepare('SELECT COUNT(*) as cnt FROM chunks').get() as { cnt: number }).cnt;
     const files = (this.db.prepare('SELECT COUNT(DISTINCT filepath) as cnt FROM chunks').get() as { cnt: number }).cnt;

@@ -53,3 +53,12 @@ Tek bir dosya veya modül hakkında 360° analiz raporu üret.
 ### Kritik Bulgular
 ...
 ```
+
+## Output Depth
+
+| Parameter | Behavior |
+|-----------|----------|
+| `depth: shallow` (default) | Summary: issue count, top 3 findings, recommendations |
+| `depth: deep` | Full analysis: every finding with code excerpt, detailed fix steps, related CWE/OWASP refs |
+
+To save output as .md file: `run_skill skill="deep-dive" path="src/" depth="deep" save=true`

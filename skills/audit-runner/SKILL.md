@@ -40,3 +40,12 @@ Tam audit raporu (markdown) + aksiyon özeti:
 - 🔴 Kritik bulgular (bloklanmalı)
 - 🟡 Yüksek öncelik (1 sprint içinde)
 - 🟢 İyileştirme önerileri
+
+## Output Depth
+
+| Parameter | Behavior |
+|-----------|----------|
+| `depth: shallow` (default) | Summary: issue count, top 3 findings, recommendations |
+| `depth: deep` | Full analysis: every finding with code excerpt, detailed fix steps, related CWE/OWASP refs |
+
+To save output as .md file: `run_skill skill="audit-runner" path="src/" depth="deep" save=true`
