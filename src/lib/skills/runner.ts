@@ -42,7 +42,7 @@ export class SkillRunner {
       case 'performance-audit':
         return this.runPerformanceAudit(target);
       case 'refactor-planner':
-        return this.runRefactorPlanner(target);
+        return this.runRefactorPlanner(target, opts);
       case 'doc-analyzer':
         return this.runDocAnalyzer(target);
       case 'feature-planner':
@@ -50,7 +50,7 @@ export class SkillRunner {
       case 'bug-reporter':
         return this.runBugReporter(target, opts);
       case 'deep-dive':
-        return this.runDeepDive(target);
+        return this.runDeepDive(target, opts);
       case 'audit-runner':
         return this.runAuditRunner(target, opts);
       case 'pitch-deck':
@@ -71,7 +71,33 @@ export class SkillRunner {
     }
   }
 
+  // ─── Helper: code context excerpt ────────────────────────────────────────────
+
+  private getCodeContext(filepath: string, line: number | undefined, contextLines = 5): string {
+    if (!line) return '';
+    try {
+      const lines = fs.readFileSync(filepath, 'utf-8').split('\n');
+      const start = Math.max(0, line - contextLines - 1);
+      const end = Math.min(lines.length, line + contextLines);
+      const numbered = lines.slice(start, end).map((l, i) =>
+        `${start + i + 1 === line ? '→' : ' '} ${start + i + 1}: ${l}`
+      );
+      return '```\n' + numbered.join('\n') + '\n```';
+    } catch { return ''; }
+  }
+
+  // ─── Helper: OWASP category link ─────────────────────────────────────────────
+
+  private owaspLink(category: string | undefined): string {
+    if (!category) return '';
+    const slug = category.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    return `[${category}](https://owasp.org/www-project-top-ten/${slug}/)`;
+  }
+
+  // ─── Skills ──────────────────────────────────────────────────────────────────
+
   private async runSecurityAudit(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const deep = opts.depth === 'deep';
     const issues: AuditIssue[] = [];
     const files = this.resolveFiles(target);
 
@@ -95,10 +121,73 @@ export class SkillRunner {
       } catch { /* skip */ }
     }
 
-    return formatIssuesMarkdown('Security Audit', issues, files.length);
+    if (!deep) {
+      return formatIssuesMarkdown('Security Audit', issues, files.length);
+    }
+
+    // ── deep mode ───────────────────────────────────────────────────────────────
+    const critical = issues.filter(i => i.severity === 'critical');
+    const high     = issues.filter(i => i.severity === 'high');
+    const medium   = issues.filter(i => i.severity === 'medium');
+    const low      = issues.filter(i => i.severity === 'low');
+
+    let output = `## Security Audit (Deep Mode)\n\n`;
+    output += `**Files analyzed:** ${files.length} | **Issues:** ${issues.length}`;
+    output += ` (🔴 ${critical.length} critical, 🟠 ${high.length} high, 🟡 ${medium.length} medium, ⚪ ${low.length} low)\n\n`;
+
+    // Summary table per file
+    const fileMap = new Map<string, { critical: number; high: number; medium: number }>();
+    for (const i of issues) {
+      if (!fileMap.has(i.filepath)) fileMap.set(i.filepath, { critical: 0, high: 0, medium: 0 });
+      const r = fileMap.get(i.filepath)!;
+      if (i.severity === 'critical') r.critical++;
+      else if (i.severity === 'high') r.high++;
+      else if (i.severity === 'medium') r.medium++;
+    }
+    output += `### Summary Table\n\n| File | Critical | High | Medium |\n|------|----------|------|--------|\n`;
+    for (const [fp, counts] of fileMap) {
+      output += `| \`${fp}\` | ${counts.critical} | ${counts.high} | ${counts.medium} |\n`;
+    }
+    output += '\n';
+
+    // Per-severity detailed findings with code excerpts + OWASP links + remediation
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+      const group = issues.filter(i => i.severity === severity);
+      if (group.length === 0) continue;
+      const emoji = { critical: '🔴', high: '🟠', medium: '🟡', low: '⚪' }[severity];
+      output += `### ${emoji} ${severity.toUpperCase()} (${group.length})\n\n`;
+      for (const issue of group) {
+        output += `#### ${issue.title}\n`;
+        output += `- **File:** \`${issue.filepath}${issue.line ? ':' + issue.line : ''}\`\n`;
+        if (issue.owaspCategory) output += `- **OWASP:** ${this.owaspLink(issue.owaspCategory)}\n`;
+        if (issue.cwe) output += `- **CWE:** [CWE-${issue.cwe}](https://cwe.mitre.org/data/definitions/${issue.cwe}.html)\n`;
+        output += `- **Description:** ${issue.description}\n\n`;
+
+        const ctx = this.getCodeContext(issue.filepath, issue.line, 3);
+        if (ctx) output += `**Vulnerable code:**\n${ctx}\n\n`;
+
+        if (issue.fix) {
+          output += `**Step-by-step remediation:**\n`;
+          output += `1. Locate line ${issue.line ?? '?'} in \`${issue.filepath}\`.\n`;
+          output += `2. ${issue.fix}\n`;
+          output += `3. Re-run \`security_scan\` to confirm the issue is resolved.\n\n`;
+        }
+      }
+    }
+
+    // Recommended task order by blast radius (critical first, then high)
+    output += `## Recommended Task Order\n\n`;
+    output += `Fix issues in the following order based on severity and blast radius:\n\n`;
+    let taskIdx = 1;
+    for (const issue of [...critical, ...high].slice(0, 10)) {
+      output += `${taskIdx++}. **${issue.title}** — \`${issue.filepath}:${issue.line ?? '?'}\` [${issue.severity.toUpperCase()}]\n`;
+    }
+
+    return output;
   }
 
-  private async runCodeReview(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+  private async runCodeReview(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const deep = opts.depth === 'deep';
     const issues: AuditIssue[] = [];
     const files = this.resolveFiles(target);
 
@@ -110,7 +199,69 @@ export class SkillRunner {
       } catch { /* skip */ }
     }
 
-    return formatIssuesMarkdown('Code Review', issues, files.length);
+    if (!deep) {
+      return formatIssuesMarkdown('Code Review', issues, files.length);
+    }
+
+    // ── deep mode ───────────────────────────────────────────────────────────────
+    const critical = issues.filter(i => i.severity === 'critical');
+    const high     = issues.filter(i => i.severity === 'high');
+    const medium   = issues.filter(i => i.severity === 'medium');
+    const low      = issues.filter(i => i.severity === 'low');
+
+    let output = `## Code Review (Deep Mode)\n\n`;
+    output += `**Files analyzed:** ${files.length} | **Issues:** ${issues.length}`;
+    output += ` (🔴 ${critical.length} critical, 🟠 ${high.length} high, 🟡 ${medium.length} medium, ⚪ ${low.length} low)\n\n`;
+
+    // Pattern frequency table
+    const patternCount = new Map<string, number>();
+    for (const i of issues) {
+      patternCount.set(i.category, (patternCount.get(i.category) ?? 0) + 1);
+    }
+    output += `### Pattern Frequency\n\n| Category | Count |\n|----------|-------|\n`;
+    for (const [cat, cnt] of [...patternCount.entries()].sort((a, b) => b[1] - a[1])) {
+      output += `| ${cat} | ${cnt} |\n`;
+    }
+    output += '\n';
+
+    // Technical debt score per file
+    const fileDebt = new Map<string, number>();
+    for (const i of issues) {
+      const weight = { critical: 10, high: 5, medium: 2, low: 1, info: 0 }[i.severity] ?? 0;
+      fileDebt.set(i.filepath, (fileDebt.get(i.filepath) ?? 0) + weight);
+    }
+    const sortedByDebt = [...fileDebt.entries()].sort((a, b) => b[1] - a[1]);
+    if (sortedByDebt.length > 0) {
+      output += `### Technical Debt Score (per file)\n\n| File | Debt Score |\n|------|------------|\n`;
+      for (const [fp, score] of sortedByDebt) {
+        output += `| \`${fp}\` | ${score} |\n`;
+      }
+      output += '\n';
+    }
+
+    // Detailed findings with code excerpts + refactoring before/after hints
+    for (const severity of ['critical', 'high', 'medium', 'low'] as const) {
+      const group = issues.filter(i => i.severity === severity);
+      if (group.length === 0) continue;
+      const emoji = { critical: '🔴', high: '🟠', medium: '🟡', low: '⚪' }[severity];
+      output += `### ${emoji} ${severity.toUpperCase()} (${group.length})\n\n`;
+      for (const issue of group) {
+        output += `#### ${issue.title}\n`;
+        output += `- **File:** \`${issue.filepath}${issue.line ? ':' + issue.line : ''}\`\n`;
+        output += `- **Description:** ${issue.description}\n\n`;
+
+        const ctx = this.getCodeContext(issue.filepath, issue.line, 5);
+        if (ctx) output += `**Problematic code block:**\n${ctx}\n\n`;
+
+        if (issue.fix) {
+          output += `**Refactoring suggestion:**\n`;
+          output += `- Before: (see code block above)\n`;
+          output += `- After: ${issue.fix}\n\n`;
+        }
+      }
+    }
+
+    return output;
   }
 
   private async runDependencyRisk(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
@@ -173,26 +324,69 @@ export class SkillRunner {
     return output;
   }
 
-  private async runRefactorPlanner(target: string | undefined): Promise<string> {
+  private async runRefactorPlanner(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const deep = opts.depth === 'deep';
     const files = this.resolveFiles(target);
-    const allIssues: string[] = [];
+    const allIssues: Array<{ file: string; issue: AuditIssue }> = [];
 
     for (const file of files) {
       try {
         const issues = complexityIssues(file);
         for (const i of issues) {
-          allIssues.push(`- **${file}:${i.line}** — ${i.title} (complexity: ${i.description})`);
+          allIssues.push({ file, issue: i });
         }
       } catch { /* skip */ }
     }
 
-    let output = `## Refactor Planı\n\n**Analiz edilen dosya:** ${files.length}\n\n`;
+    if (!deep) {
+      let output = `## Refactor Planı\n\n**Analiz edilen dosya:** ${files.length}\n\n`;
+      if (allIssues.length === 0) {
+        output += '✅ Refactor gerektiren kritik bölge bulunamadı.\n';
+      } else {
+        output += `### 🔴 Yüksek Complexity (${allIssues.length} bölge)\n\n`;
+        output += allIssues.map(({ file, issue }) =>
+          `- **${file}:${issue.line}** — ${issue.title} (complexity: ${issue.description})`
+        ).join('\n') + '\n\n';
+        output += `### Öneri\nEn yüksek complexity'li fonksiyonları küçük fonksiyonlara böl.\n`;
+      }
+      return output;
+    }
+
+    // ── deep mode ───────────────────────────────────────────────────────────────
+    let output = `## Refactor Planı (Deep Mode)\n\n**Analiz edilen dosya:** ${files.length}\n\n`;
+
     if (allIssues.length === 0) {
       output += '✅ Refactor gerektiren kritik bölge bulunamadı.\n';
-    } else {
-      output += `### 🔴 Yüksek Complexity (${allIssues.length} bölge)\n\n${allIssues.join('\n')}\n\n`;
-      output += `### Öneri\nEn yüksek complexity'li fonksiyonları küçük fonksiyonlara böl.\n`;
+      return output;
     }
+
+    // Show actual complex functions: name, line, description
+    output += `### 🔴 Yüksek Complexity Fonksiyonlar (${allIssues.length})\n\n`;
+    output += `| Dosya | Satır | Fonksiyon | Detay |\n|-------|-------|-----------|-------|\n`;
+    for (const { file, issue } of allIssues) {
+      output += `| \`${file}\` | ${issue.line ?? '?'} | ${issue.title} | ${issue.description} |\n`;
+    }
+    output += '\n';
+
+    // Top 3 hotspots with before/after refactoring sketch and estimated hours
+    const top3 = allIssues.slice(0, 3);
+    output += `### Top 3 Hotspot — Refactor Taslağı\n\n`;
+    for (let idx = 0; idx < top3.length; idx++) {
+      const { file, issue } = top3[idx];
+      output += `#### ${idx + 1}. ${issue.title} — \`${file}:${issue.line ?? '?'}\`\n`;
+      output += `**Sorun:** ${issue.description}\n\n`;
+
+      const ctx = this.getCodeContext(file, issue.line, 5);
+      if (ctx) output += `**Mevcut kod:**\n${ctx}\n\n`;
+
+      output += `**Önerilen refactor:**\n`;
+      output += `- Fonksiyonu tek sorumluluk prensibine göre 2-3 küçük fonksiyona böl.\n`;
+      output += `- Her dallanma (if/switch) için ayrı yardımcı fonksiyon çıkar.\n`;
+      output += `- Döngü içi mantığı extract et.\n\n`;
+      output += `**Tahmini süre:** ~${1 + idx} saat\n\n`;
+    }
+
+    output += `### Öneri\nEn yüksek complexity'li fonksiyonları küçük fonksiyonlara böl. Her adım için \`task_create\` çağrısı yap.\n`;
     return output;
   }
 
@@ -234,6 +428,7 @@ export class SkillRunner {
   }
 
   private async runBugReporter(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const deep = opts.depth === 'deep';
     const files = this.resolveFiles(target);
     const issues: AuditIssue[] = [];
 
@@ -245,24 +440,78 @@ export class SkillRunner {
     }
 
     const criticalIssues = issues.filter(i => i.severity === 'critical' || i.severity === 'high');
-    let output = `## Bug Raporu\n\n**Taranan dosya:** ${files.length}\n`;
+
+    if (!deep) {
+      let output = `## Bug Raporu\n\n**Taranan dosya:** ${files.length}\n`;
+      output += `**Kritik/Yüksek sorun:** ${criticalIssues.length}\n\n`;
+      if (criticalIssues.length === 0) {
+        output += '✅ Kritik bug pattern bulunmadı.\n';
+      } else {
+        for (const issue of criticalIssues.slice(0, 10)) {
+          output += `### 🔴 ${issue.title}\n`;
+          output += `- **Dosya:** \`${issue.filepath}:${issue.line}\`\n`;
+          output += `- **Açıklama:** ${issue.description}\n`;
+          if (issue.fix) output += `- **Fix:** ${issue.fix}\n`;
+          output += '\n';
+        }
+      }
+      return output;
+    }
+
+    // ── deep mode ───────────────────────────────────────────────────────────────
+    let output = `## Bug Raporu (Deep Mode)\n\n**Taranan dosya:** ${files.length}\n`;
     output += `**Kritik/Yüksek sorun:** ${criticalIssues.length}\n\n`;
 
     if (criticalIssues.length === 0) {
       output += '✅ Kritik bug pattern bulunmadı.\n';
-    } else {
-      for (const issue of criticalIssues.slice(0, 10)) {
-        output += `### 🔴 ${issue.title}\n`;
-        output += `- **Dosya:** \`${issue.filepath}:${issue.line}\`\n`;
-        output += `- **Açıklama:** ${issue.description}\n`;
-        if (issue.fix) output += `- **Fix:** ${issue.fix}\n`;
-        output += '\n';
+      return output;
+    }
+
+    // Count files affected per issue category
+    const categoryFiles = new Map<string, Set<string>>();
+    for (const i of issues) {
+      if (!categoryFiles.has(i.category)) categoryFiles.set(i.category, new Set());
+      categoryFiles.get(i.category)!.add(i.filepath);
+    }
+
+    for (const issue of criticalIssues.slice(0, 10)) {
+      const affectedFiles = categoryFiles.get(issue.category)?.size ?? 1;
+      output += `### 🔴 ${issue.title}\n`;
+      output += `- **Dosya:** \`${issue.filepath}:${issue.line ?? '?'}\`\n`;
+      output += `- **Açıklama:** ${issue.description}\n\n`;
+
+      // Code excerpt
+      const ctx = this.getCodeContext(issue.filepath, issue.line, 3);
+      if (ctx) output += `**İlgili kod:**\n${ctx}\n\n`;
+
+      // Root cause analysis
+      output += `**Kök neden analizi:**\n`;
+      output += `Bu pattern genellikle güvenli olmayan kullanıcı girdisi doğrulamasından veya `;
+      output += `eksik hata yönetiminden kaynaklanır. Kategori: \`${issue.category}\`.\n\n`;
+
+      // Impact assessment
+      output += `**Etki değerlendirmesi:**\n`;
+      output += `Bu sorun \`${issue.category}\` kategorisindeki **${affectedFiles} dosyayı** etkiliyor.\n\n`;
+
+      // Reproduction scenario
+      output += `**Tetikleme senaryosu:**\n`;
+      output += `1. \`${issue.filepath}\` dosyasının ${issue.line ?? '?'}. satırına kontrollü girdi gönderin.\n`;
+      output += `2. ${issue.description}\n\n`;
+
+      // Fix steps
+      if (issue.fix) {
+        output += `**Düzeltme adımları:**\n`;
+        output += `1. \`${issue.filepath}\` dosyasını aç, satır ${issue.line ?? '?'} civarını incele.\n`;
+        output += `2. Uygula: ${issue.fix}\n`;
+        output += `3. Değişikliği kaydet ve \`security_scan\` ile doğrula.\n\n`;
       }
     }
+
     return output;
   }
 
-  private async runDeepDive(target: string | undefined): Promise<string> {
+  private async runDeepDive(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const deep = opts.depth === 'deep';
     if (!target) return '## Deep Dive\n\nLütfen bir dosya veya dizin belirtin.';
     const files = this.resolveFiles(target);
     const secIssues: AuditIssue[] = [];
@@ -280,22 +529,112 @@ export class SkillRunner {
     const qualScore = Math.max(0, 10 - Math.floor(qualIssues.length * 0.5));
     const overall = Math.round((secScore + qualScore) / 2);
 
-    let output = `## Deep Dive: ${target}\n\n`;
+    if (!deep) {
+      let output = `## Deep Dive: ${target}\n\n`;
+      output += `| Boyut | Skor | Detay |\n|-------|------|-------|\n`;
+      output += `| Güvenlik | ${secScore}/10 | ${secIssues.length} sorun |\n`;
+      output += `| Kalite | ${qualScore}/10 | ${qualIssues.length} sorun |\n`;
+      output += `\n**Genel: ${overall}/10**\n\n`;
+      if (secIssues.filter(i => i.severity === 'critical').length > 0) {
+        output += `### 🔴 Kritik Güvenlik Bulguları\n`;
+        for (const i of secIssues.filter(x => x.severity === 'critical').slice(0, 5)) {
+          output += `- **${i.title}** — \`${i.filepath}:${i.line}\`\n`;
+        }
+      }
+      return output;
+    }
+
+    // ── deep mode ───────────────────────────────────────────────────────────────
+    let output = `## Deep Dive (Deep Mode): ${target}\n\n`;
     output += `| Boyut | Skor | Detay |\n|-------|------|-------|\n`;
     output += `| Güvenlik | ${secScore}/10 | ${secIssues.length} sorun |\n`;
     output += `| Kalite | ${qualScore}/10 | ${qualIssues.length} sorun |\n`;
     output += `\n**Genel: ${overall}/10**\n\n`;
 
-    if (secIssues.filter(i => i.severity === 'critical').length > 0) {
-      output += `### 🔴 Kritik Güvenlik Bulguları\n`;
-      for (const i of secIssues.filter(x => x.severity === 'critical').slice(0, 5)) {
-        output += `- **${i.title}** — \`${i.filepath}:${i.line}\`\n`;
+    // Full function inventory
+    output += `### Fonksiyon Envanteri\n\n`;
+    output += `| Dosya | Export | Fonksiyon | Satır Sayısı |\n|-------|--------|-----------|-------------|\n`;
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        const lines = content.split('\n');
+        const fnMatches = [...content.matchAll(/(?:(export)\s+)?(?:async\s+)?function\s+(\w+)|(?:(export)\s+)?(?:const|let)\s+(\w+)\s*=\s*(?:async\s+)?\(/g)];
+        for (const m of fnMatches) {
+          const exported = !!(m[1] || m[3]);
+          const name = m[2] ?? m[4] ?? '(anonymous)';
+          // Estimate line count by finding next function or end of file
+          const matchIdx = content.indexOf(m[0]);
+          const startLine = content.slice(0, matchIdx).split('\n').length;
+          const nextFnMatch = content.indexOf('\nfunction ', matchIdx + 1);
+          const endLine = nextFnMatch > -1
+            ? content.slice(0, nextFnMatch).split('\n').length
+            : lines.length;
+          const lineCount = Math.max(1, endLine - startLine);
+          output += `| \`${file}\` | ${exported ? 'yes' : 'no'} | \`${name}\` | ~${lineCount} |\n`;
+        }
+      } catch { /* skip */ }
+    }
+    output += '\n';
+
+    // Import/dependency graph
+    output += `### Import Grafiği\n\n`;
+    for (const file of files.slice(0, 10)) {
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        const imports = [...content.matchAll(/import\s+.*?from\s+['"]([^'"]+)['"]/g)].map(m => m[1]);
+        if (imports.length > 0) {
+          output += `**\`${file}\`** imports:\n`;
+          for (const imp of imports) output += `  - \`${imp}\`\n`;
+          output += '\n';
+        }
+      } catch { /* skip */ }
+    }
+
+    // Code age estimation based on style patterns
+    output += `### Kod Yaşı Tahmini\n\n`;
+    const ageHints: string[] = [];
+    for (const file of files.slice(0, 5)) {
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        const hasVar = /\bvar\b/.test(content);
+        const hasCallback = /function\s*\(err,/.test(content);
+        const hasAsync = /\basync\b/.test(content);
+        const hasOptionalChain = /\?\.[a-z]/.test(content);
+        const era = hasVar && hasCallback ? 'Pre-ES6 (2015 öncesi)' :
+          hasAsync && hasOptionalChain ? 'Modern ES2020+' :
+          hasAsync ? 'ES2017+' : 'ES6-ES2017';
+        ageHints.push(`- \`${file}\` — ${era}`);
+      } catch { /* skip */ }
+    }
+    output += ageHints.join('\n') || '- (dosya okunamadı)';
+    output += '\n\n';
+
+    // Risk score breakdown
+    const riskScore = Math.max(0, 10 - overall);
+    output += `### Risk Skoru: ${riskScore}/10\n\n`;
+    output += `| Bileşen | Puan | Açıklama |\n|---------|------|----------|\n`;
+    output += `| Güvenlik açıkları | ${secIssues.filter(i => i.severity === 'critical').length * 3} | Kritik güvenlik sorunları |\n`;
+    output += `| Kalite borcu | ${Math.min(10, qualIssues.length)} | Kalite sorunları |\n`;
+    output += `| Dosya karmaşıklığı | ${Math.min(10, files.length)} | Dosya sayısı |\n\n`;
+
+    // Top 3 most dangerous functions with full code
+    const criticalSecIssues = secIssues.filter(i => i.severity === 'critical').slice(0, 3);
+    if (criticalSecIssues.length > 0) {
+      output += `### Top ${criticalSecIssues.length} En Tehlikeli Bölge\n\n`;
+      for (let idx = 0; idx < criticalSecIssues.length; idx++) {
+        const issue = criticalSecIssues[idx];
+        output += `#### ${idx + 1}. ${issue.title} — \`${issue.filepath}:${issue.line ?? '?'}\`\n`;
+        output += `${issue.description}\n\n`;
+        const ctx = this.getCodeContext(issue.filepath, issue.line, 5);
+        if (ctx) output += `${ctx}\n\n`;
       }
     }
+
     return output;
   }
 
-  private async runAuditRunner(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+  private async runAuditRunner(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const deep = opts.depth === 'deep';
     const files = this.resolveFiles(target);
     const secIssues: AuditIssue[] = [];
     const qualIssues: AuditIssue[] = [];
@@ -309,30 +648,110 @@ export class SkillRunner {
     }
 
     const critical = secIssues.filter(i => i.severity === 'critical');
-    const high = secIssues.filter(i => i.severity === 'high');
+    const high     = secIssues.filter(i => i.severity === 'high');
 
-    let output = `## Tam Audit Raporu\n\n`;
+    if (!deep) {
+      let output = `## Tam Audit Raporu\n\n`;
+      output += `**Taranan dosya:** ${files.length}\n`;
+      output += `**Güvenlik sorunları:** ${secIssues.length} (🔴 ${critical.length} kritik, 🟠 ${high.length} yüksek)\n`;
+      output += `**Kalite sorunları:** ${qualIssues.length}\n\n`;
+      if (critical.length > 0) {
+        output += `### 🔴 Kritik Sorunlar (BLOKLA)\n\n`;
+        for (const i of critical.slice(0, 10)) {
+          output += `- **${i.title}** — \`${i.filepath}:${i.line}\`\n  ${i.description}\n`;
+        }
+        output += '\n';
+      }
+      if (high.length > 0) {
+        output += `### 🟠 Yüksek Öncelik (1 Sprint)\n\n`;
+        for (const i of high.slice(0, 10)) {
+          output += `- **${i.title}** — \`${i.filepath}:${i.line}\`\n`;
+        }
+        output += '\n';
+      }
+      if (secIssues.length === 0 && qualIssues.length === 0) {
+        output += '✅ Temiz repo! Önemli sorun bulunamadı.\n';
+      }
+      return output;
+    }
+
+    // ── deep mode ───────────────────────────────────────────────────────────────
+    const medium   = secIssues.filter(i => i.severity === 'medium');
+    const allIssues = [...secIssues, ...qualIssues];
+
+    let output = `## Tam Audit Raporu (Deep Mode)\n\n`;
     output += `**Taranan dosya:** ${files.length}\n`;
     output += `**Güvenlik sorunları:** ${secIssues.length} (🔴 ${critical.length} kritik, 🟠 ${high.length} yüksek)\n`;
     output += `**Kalite sorunları:** ${qualIssues.length}\n\n`;
 
+    // Per-file breakdown table
+    const fileBreakdown = new Map<string, { critical: number; high: number; medium: number; low: number }>();
+    for (const i of allIssues) {
+      if (!fileBreakdown.has(i.filepath)) fileBreakdown.set(i.filepath, { critical: 0, high: 0, medium: 0, low: 0 });
+      const r = fileBreakdown.get(i.filepath)!;
+      if (i.severity === 'critical') r.critical++;
+      else if (i.severity === 'high') r.high++;
+      else if (i.severity === 'medium') r.medium++;
+      else r.low++;
+    }
+    output += `### Dosya Bazlı Özet\n\n| Dosya | Critical | High | Medium | Low |\n|-------|----------|------|--------|-----|\n`;
+    for (const [fp, counts] of fileBreakdown) {
+      output += `| \`${fp}\` | ${counts.critical} | ${counts.high} | ${counts.medium} | ${counts.low} |\n`;
+    }
+    output += '\n';
+
+    // All findings with code excerpts (not just top 10)
     if (critical.length > 0) {
       output += `### 🔴 Kritik Sorunlar (BLOKLA)\n\n`;
-      for (const i of critical.slice(0, 10)) {
-        output += `- **${i.title}** — \`${i.filepath}:${i.line}\`\n  ${i.description}\n`;
+      for (const i of critical) {
+        output += `#### ${i.title}\n`;
+        output += `- **Dosya:** \`${i.filepath}:${i.line ?? '?'}\`\n`;
+        output += `- ${i.description}\n\n`;
+        const ctx = this.getCodeContext(i.filepath, i.line, 3);
+        if (ctx) output += `${ctx}\n\n`;
+        if (i.fix) output += `**Fix:** ${i.fix}\n\n`;
       }
-      output += '\n';
     }
     if (high.length > 0) {
-      output += `### 🟠 Yüksek Öncelik (1 Sprint)\n\n`;
-      for (const i of high.slice(0, 10)) {
-        output += `- **${i.title}** — \`${i.filepath}:${i.line}\`\n`;
+      output += `### 🟠 Yüksek Öncelik (Bu Hafta)\n\n`;
+      for (const i of high) {
+        output += `#### ${i.title}\n`;
+        output += `- **Dosya:** \`${i.filepath}:${i.line ?? '?'}\`\n`;
+        output += `- ${i.description}\n\n`;
+        const ctx = this.getCodeContext(i.filepath, i.line, 3);
+        if (ctx) output += `${ctx}\n\n`;
+        if (i.fix) output += `**Fix:** ${i.fix}\n\n`;
+      }
+    }
+    if (medium.length > 0) {
+      output += `### 🟡 Orta Öncelik (Bu Sprint)\n\n`;
+      for (const i of medium) {
+        output += `- **${i.title}** — \`${i.filepath}:${i.line ?? '?'}\`\n`;
+        output += `  ${i.description}${i.fix ? ' → ' + i.fix : ''}\n`;
       }
       output += '\n';
     }
+
+    // Remediation timeline
+    output += `### Düzeltme Zaman Çizelgesi\n\n`;
+    output += `| Seviye | Hedef | Sorun Sayısı |\n|--------|-------|-------------|\n`;
+    output += `| 🔴 Critical | Bugün | ${critical.length} |\n`;
+    output += `| 🟠 High | Bu hafta | ${high.length} |\n`;
+    output += `| 🟡 Medium | Bu sprint | ${medium.length} |\n\n`;
+
     if (secIssues.length === 0 && qualIssues.length === 0) {
       output += '✅ Temiz repo! Önemli sorun bulunamadı.\n';
     }
+
+    // Suggested task_create calls for critical issues
+    if (critical.length > 0) {
+      output += `## Onerilen Task'lar\n\n`;
+      output += 'Her kritik sorun için aşağıdaki komutları çalıştırın:\n\n';
+      for (const issue of critical.slice(0, 5)) {
+        output += `\`\`\`\ntask_create title="Fix: ${issue.title}" category="bug" priority="critical" filepath="${issue.filepath}"\n\`\`\`\n`;
+      }
+    }
+
     return output;
   }
 
