@@ -25,10 +25,10 @@ import { SpecEngine } from './lib/spec/spec-engine.js';
 import { ResearchEngine } from './lib/research/research-engine.js';
 import { render as renderTemplate } from './lib/templates/template-engine.js';
 import { TemplateRegistry } from './lib/templates/template-registry.js';
-import { detectComplexity } from './lib/orchestrator/complexity-detector.js';
-import { selectSkills } from './lib/orchestrator/skill-selector.js';
-import { routeTask } from './lib/orchestrator/task-router.js';
 import { TaskPriority, TaskCategory, TaskStatus } from './types/v2.js';
+import { SessionStore } from './lib/orchestrator/session-store.js';
+import { Conductor } from './lib/orchestrator/conductor.js';
+import { handleOrchestratorTool, ORCHESTRATOR_TOOL_NAMES, ORCHESTRATOR_TOOL_DEFS } from './tools/orchestrator.js';
 
 // ─── Collect files (single file or recursive dir walk) ────────────────────────
 function collectFiles(target: string, extensions: string[]): string[] {
@@ -84,6 +84,8 @@ const gitTools = new GitTools(REPO_ROOT);
 const reportTools = new ReportTools(REPORTS_DIR, REPO_ROOT);
 const pluginRegistry = new PluginRegistry();
 const taskStore = new TaskStore(AUDIT_DATA_DIR);
+const sessionStore = new SessionStore(AUDIT_DATA_DIR);
+const conductor = new Conductor(sessionStore, taskStore);
 const specEngine = new SpecEngine(AUDIT_DATA_DIR);
 const templateRegistry = new TemplateRegistry([
   BUILTIN_TEMPLATES_DIR,
@@ -172,10 +174,8 @@ const TOOLS = [
   { name: 'find_references', description: 'Use when user asks "where is this function used", "find all callers of X", or before renaming/deleting a symbol.', inputSchema: { type: 'object', required: ['symbol'], properties: { symbol: { type: 'string' }, path: { type: 'string' } } } },
   { name: 'get_dependencies', description: 'Use when user asks "what does this file depend on", "show imports", or to understand module relationships before refactoring.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
 
-  // ── Orchestrator (3) ──────────────────────────────────────────────────────
-  { name: 'analyze_complexity', description: 'Use when a request is ambiguous or potentially large — classify as trivial/simple/moderate/complex/epic to decide the right approach before acting.', inputSchema: { type: 'object', required: ['request'], properties: { request: { type: 'string' }, context: { type: 'string' } } } },
-  { name: 'route_task', description: 'Use for any multi-step task to get an ordered execution plan. Use BEFORE starting complex work so steps are done in the right order with the right tools.', inputSchema: { type: 'object', required: ['request'], properties: { request: { type: 'string' }, context: { type: 'string' } } } },
-  { name: 'suggest_skill', description: 'Use when unsure which skill fits the user request — returns ranked skill suggestions with confidence scores.', inputSchema: { type: 'object', required: ['request'], properties: { request: { type: 'string' }, topK: { type: 'number' } } } },
+  // ── Orchestrator (8) ──────────────────────────────────────────────────────
+  ...ORCHESTRATOR_TOOL_DEFS,
 
   // ── Spec / Kiro-mode (5) ──────────────────────────────────────────────────
   { name: 'spec_init', description: 'Use when user wants to build a new feature — creates a structured requirements→design→tasks workflow. Trigger on: "implement X", "build Y", "add feature Z", "I want to create...".', inputSchema: { type: 'object', required: ['name', 'description'], properties: { name: { type: 'string' }, description: { type: 'string' } } } },
@@ -353,47 +353,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     }
 
     // ── Orchestrator tools ────────────────────────────────────────────────────
-    else if (name === 'analyze_complexity') {
-      const intent = args.request as string;
-      const analysis = detectComplexity(intent);
-      text = `## Complexity Analysis\n\n` +
-        `**Level:** ${analysis.level}\n` +
-        `**Estimated Steps:** ${analysis.estimatedSteps}\n` +
-        `**Requires Memory:** ${analysis.requiresMemory}\n` +
-        `**Requires Research:** ${analysis.requiresResearch}\n` +
-        `**Requires Spec:** ${analysis.requiresSpec}\n` +
-        `**Confidence:** ${(analysis.confidence * 100).toFixed(0)}%\n` +
-        `**Suggested Skills:** ${analysis.suggestedSkills.join(', ') || 'none'}\n\n` +
-        `**Reasoning:** ${analysis.reasoning}`;
-    }
-    else if (name === 'route_task') {
-      const intent = args.request as string;
-      const analysis = detectComplexity(intent);
-      const allSkills = skillRegistry.list();
-      const selected = selectSkills(intent, allSkills, analysis);
-      const decision = routeTask(intent, analysis, selected);
-      text = `## Routing Decision\n\n` +
-        `**Strategy:** ${decision.strategy}\n` +
-        `**Primary Skill:** ${decision.primarySkill ?? 'none'}\n` +
-        `**Requires Approval:** ${decision.requiresApproval}\n` +
-        `**Rationale:** ${decision.rationale}\n\n` +
-        `### Steps (${decision.steps.length})\n\n` +
-        decision.steps.map(s =>
-          `${s.order}. **${s.tool}** — ${s.description}${s.miniPrompt ? `\n   > ${s.miniPrompt.slice(0, 100)}` : ''}`
-        ).join('\n');
-    }
-    else if (name === 'suggest_skill') {
-      const intent = args.request as string;
-      const topK = (args.topK as number) ?? 3;
-      const analysis = detectComplexity(intent);
-      const allSkills = skillRegistry.list();
-      const selected = selectSkills(intent, allSkills, analysis);
-      const top = selected.slice(0, topK);
-      text = top.length === 0
-        ? 'Uygun skill bulunamadı.'
-        : `## Önerilen Skill'ler\n\n` + top.map((s, i) =>
-          `${i + 1}. **${s.name}** — ${s.description}\n   Category: ${s.category}`
-        ).join('\n\n');
+    else if ((ORCHESTRATOR_TOOL_NAMES as readonly string[]).includes(name)) {
+      text = await handleOrchestratorTool(name, args, conductor, skillRegistry, REPO_ROOT);
     }
 
     // ── Spec tools ────────────────────────────────────────────────────────────
