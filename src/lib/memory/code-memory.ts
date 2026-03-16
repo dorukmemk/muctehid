@@ -1,12 +1,53 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { glob } from 'glob';
+import ignore from 'ignore';
 import { CodeChunk, SearchResult, SearchOptions, MemoryStats, IndexOptions } from '../../types/index.js';
 import { SQLiteStore, makeChunkId } from './sqlite-store.js';
 import { VectorStore } from './vector-store.js';
 import { embed } from './embedder.js';
 import { chunkFile, shouldSkip } from './chunker.js';
 import { hybridSearch } from './hybrid-search.js';
+
+// ── Batch parallel embedding ──────────────────────────────────────────────────
+const EMBED_CONCURRENCY = 8;
+
+interface RawChunk {
+  filepath: string;
+  content: string;
+  startLine: number;
+  endLine: number;
+  language: string;
+  symbols: string[];
+}
+
+async function embedBatch(chunks: RawChunk[], embedFn: (text: string) => Promise<number[]>): Promise<Array<number[] | null>> {
+  const results: Array<number[] | null> = new Array(chunks.length).fill(null);
+  for (let i = 0; i < chunks.length; i += EMBED_CONCURRENCY) {
+    const batch = chunks.slice(i, i + EMBED_CONCURRENCY);
+    const vectors = await Promise.all(
+      batch.map(c => embedFn(c.content.slice(0, 512)).catch(() => null))
+    );
+    for (let j = 0; j < vectors.length; j++) {
+      results[i + j] = vectors[j];
+    }
+  }
+  return results;
+}
+
+// ── Gitignore-based exclusion ─────────────────────────────────────────────────
+function loadGitignore(repoRoot: string): ReturnType<typeof ignore> {
+  const ig = ignore();
+  const gitignorePath = path.join(repoRoot, '.gitignore');
+  if (fs.existsSync(gitignorePath)) {
+    try {
+      ig.add(fs.readFileSync(gitignorePath, 'utf-8'));
+    } catch { /* skip */ }
+  }
+  // Always ignore these
+  ig.add(['node_modules', 'dist', '.git', '.audit-data', '*.lock', '*.log']);
+  return ig;
+}
 
 export class CodeMemory {
   private sqlite: SQLiteStore;
@@ -30,6 +71,9 @@ export class CodeMemory {
     const overlap = opts.overlap ?? 20;
     const mode = opts.mode ?? 'hybrid';
 
+    // Load .gitignore rules (augmented with hard-coded excludes)
+    const ig = loadGitignore(dirPath);
+
     const files = await glob('**/*', {
       cwd: dirPath,
       nodir: true,
@@ -40,7 +84,9 @@ export class CodeMemory {
     let indexed = 0, updated = 0, skipped = 0, errors = 0;
 
     for (const file of files) {
-      if (shouldSkip(file, exclude)) { skipped++; continue; }
+      // Check gitignore rules first, then fall back to shouldSkip for non-relative paths
+      const relPath = path.relative(dirPath, file).replace(/\\/g, '/');
+      if (ig.ignores(relPath)) { skipped++; continue; }
 
       try {
         const stat = fs.statSync(file);
@@ -62,6 +108,7 @@ export class CodeMemory {
           this.sqlite.deleteByFilepath(file);
         }
 
+        // Upsert all chunks to SQLite first (BM25 works immediately)
         for (const raw of chunks) {
           const id = makeChunkId(raw.filepath, raw.startLine);
           const chunk: CodeChunk = {
@@ -77,15 +124,17 @@ export class CodeMemory {
               lastModified: stat.mtimeMs,
             },
           };
-
           this.sqlite.upsert(chunk);
+        }
 
-          if (mode !== 'bm25') {
-            try {
-              const vector = await embed(raw.content);
-              this.vectors.upsert(id, vector, { language: raw.language, filepath: raw.filepath });
-            } catch {
-              // embedding failed — BM25 still works
+        // Embed all chunks for this file in parallel (batches of EMBED_CONCURRENCY)
+        if (mode !== 'bm25') {
+          const vectors = await embedBatch(chunks, embed);
+          for (let i = 0; i < chunks.length; i++) {
+            const vec = vectors[i];
+            if (vec !== null) {
+              const id = makeChunkId(chunks[i].filepath, chunks[i].startLine);
+              this.vectors.upsert(id, vec, { language: chunks[i].language, filepath: chunks[i].filepath });
             }
           }
         }

@@ -20,6 +20,7 @@ export interface SearchResult {
   score: number;
   bm25Score?: number;
   vectorScore?: number;
+  highlight?: string;
 }
 
 export type SearchMode = 'bm25' | 'vector' | 'hybrid';
@@ -130,6 +131,10 @@ export interface SkillParameter {
 }
 
 export interface SkillRunOptions {
+  depth?: 'shallow' | 'deep';
+  path?: string;
+  filepath?: string;
+  file?: string;
   [key: string]: unknown;
 }
 

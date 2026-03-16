@@ -40,6 +40,8 @@ export interface OrchSession {
   updatedAt: number;
 }
 
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+
 // ─── SessionStore ─────────────────────────────────────────────────────────────
 
 export class SessionStore {
@@ -104,7 +106,21 @@ export class SessionStore {
       "SELECT * FROM orch_sessions WHERE status = 'active' ORDER BY updated_at DESC LIMIT 1"
     ).get() as Record<string, unknown> | undefined;
     if (!row) return null;
-    return this.rowToSession(row);
+    const session = this.rowToSession(row);
+    // Auto-cancel stale sessions
+    if (Date.now() - session.updatedAt > SESSION_TTL_MS) {
+      this.updateStatus(session.id, 'cancelled');
+      return null;
+    }
+    return session;
+  }
+
+  cleanupStale(): number {
+    const cutoff = Date.now() - SESSION_TTL_MS;
+    const result = this.db.prepare(
+      "UPDATE orch_sessions SET status = 'cancelled', updated_at = ? WHERE status = 'active' AND updated_at < ?"
+    ).run(Date.now(), cutoff);
+    return result.changes;
   }
 
   logEvent(

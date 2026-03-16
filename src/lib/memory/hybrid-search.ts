@@ -5,6 +5,23 @@ import { embed } from './embedder.js';
 
 const RRF_K = 60;
 
+function highlightMatch(query: string, content: string, maxLen = 200): string {
+  const terms = query.toLowerCase().split(/\s+/).filter(t => t.length > 2);
+  const lines = content.split('\n');
+
+  // Find the line with most term matches
+  let bestLine = '';
+  let bestScore = 0;
+  for (const line of lines) {
+    const lower = line.toLowerCase();
+    const score = terms.filter(t => lower.includes(t)).length;
+    if (score > bestScore) { bestScore = score; bestLine = line.trim(); }
+  }
+
+  if (!bestLine) return content.slice(0, maxLen);
+  return bestLine.length > maxLen ? bestLine.slice(0, maxLen) + '...' : bestLine;
+}
+
 export async function hybridSearch(
   query: string,
   sqliteStore: SQLiteStore,
@@ -29,7 +46,7 @@ export async function hybridSearch(
     vectorOnly(query, vectorStore, sqliteStore, k * 2, options.filter),
   ]);
 
-  return rrfFusion(bm25Results, vectorResults, k);
+  return rrfFusion(query, bm25Results, vectorResults, k);
 }
 
 async function bm25Only(
@@ -81,7 +98,7 @@ async function vectorOnly(
     }));
 }
 
-function rrfFusion(bm25: SearchResult[], vector: SearchResult[], k: number): SearchResult[] {
+function rrfFusion(query: string, bm25: SearchResult[], vector: SearchResult[], k: number): SearchResult[] {
   const scoreMap = new Map<string, { bm25Rank?: number; vectorRank?: number; chunk: SearchResult['chunk']; bm25Score?: number; vectorScore?: number }>();
 
   bm25.forEach((r, idx) => {
@@ -111,5 +128,8 @@ function rrfFusion(bm25: SearchResult[], vector: SearchResult[], k: number): Sea
   }
 
   results.sort((a, b) => b.score - a.score);
-  return results.slice(0, k);
+  return results.slice(0, k).map(r => ({
+    ...r,
+    highlight: highlightMatch(query, r.chunk.content),
+  }));
 }

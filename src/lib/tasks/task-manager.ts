@@ -127,6 +127,22 @@ export class TaskManager {
   markDone(id: string, actualHours?: number): void {
     this.store.update(id, { status: 'done', completedAt: Date.now(), ...(actualHours ? { actualHours } : {}) });
     this.store.addTimeline(id, 'completed');
+
+    // Unblock tasks that were waiting on this one
+    const allPending = this.store.list({ status: 'pending' });
+    const allBlocked = this.store.list({ status: 'blocked' });
+    const doneTasks = new Set(this.store.list({ status: 'done' }).map(t => t.id));
+
+    for (const task of [...allPending, ...allBlocked]) {
+      if (task.dependsOn.includes(id)) {
+        // Check if ALL dependencies are now done
+        const allDepsDone = task.dependsOn.every(depId => doneTasks.has(depId));
+        if (allDepsDone && task.status === 'blocked') {
+          this.store.update(task.id, { status: 'pending' });
+          this.store.addTimeline(task.id, 'note', `Unblocked: dependency ${id} completed`);
+        }
+      }
+    }
   }
 
   markBlocked(id: string, reason: string): void {
