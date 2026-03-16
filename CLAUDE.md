@@ -1,5 +1,7 @@
 # muctehid-mcp — AI Agent Instructions
 
+> **Trigger:** Bu talimatlar `muctehid`, `müctehid`, `muctehid-mcp` kelimeleri geçtiğinde veya herhangi bir kod analizi, güvenlik taraması, özellik planlaması, görev takibi isteğinde otomatik uygulanır.
+
 This project has **muctehid-mcp** installed as a submodule at `.mcp/muctehid/`.
 Always use muctehid tools instead of reading files manually or guessing.
 
@@ -66,9 +68,35 @@ task_next         ← see what needs to be done
 | "deep analysis" | `run_skill skill="deep-dive"` |
 | "full audit" | `run_skill skill="audit-runner"` |
 
+## Hook Behavior (auto-enforced)
+
+### PreToolUse — Before every file edit
+1. Call `get_context filepath="<file>"` to load indexed knowledge
+2. If `.plan/task_plan.md` exists, re-read it to stay on goal
+
+### PostToolUse — After every edit
+1. Update `.plan/progress.md` with what was done
+2. If 2+ search/research ops done → update `.plan/findings.md` immediately (2-Action Rule)
+
+### Session End — Before finishing
+1. Verify all tasks in `task_next` are addressed
+2. Run `audit_diff` if any files were changed
+
+## Advanced Skills (new)
+
+| Skill | Trigger |
+|-------|---------|
+| `deep-planner` | "complex task", "plan this", "break this down", "architect" |
+| `session-restore` | "continue where", "resume", "where were we", "context reset" |
+| `auto-fixer` | "fix all issues", "auto fix", "clean up", "fix everything" |
+| `code-archaeologist` | "why does this exist", "history of", "who wrote", "legacy code" |
+| `impact-analyzer` | "what will break", "safe to rename", "blast radius", "before I refactor" |
+
 ## Never Do Without muctehid
 
 - Do NOT read files with cat/grep to understand the codebase — use `search_code`
 - Do NOT guess about code structure — use `research_topic`
 - Do NOT skip `audit_diff` before commits
 - Do NOT start a feature without `spec_init`
+- Do NOT start a complex task without `deep-planner`
+- Do NOT refactor/rename without `impact-analyzer` first

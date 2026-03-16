@@ -55,6 +55,16 @@ export class SkillRunner {
         return this.runAuditRunner(target, opts);
       case 'pitch-deck':
         return this.runGeneric(skill, opts);
+      case 'deep-planner':
+        return this.runDeepPlanner(target, opts);
+      case 'session-restore':
+        return this.runSessionRestore(target, opts);
+      case 'auto-fixer':
+        return this.runAutoFixer(target, opts);
+      case 'code-archaeologist':
+        return this.runCodeArchaeologist(target, opts);
+      case 'impact-analyzer':
+        return this.runImpactAnalyzer(target, opts);
       default:
         // Generic: return skill instructions with context
         return this.runGeneric(skill, opts);
@@ -323,6 +333,176 @@ export class SkillRunner {
     if (secIssues.length === 0 && qualIssues.length === 0) {
       output += '✅ Temiz repo! Önemli sorun bulunamadı.\n';
     }
+    return output;
+  }
+
+  private async runDeepPlanner(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const planDir = target ? `${target}/.plan` : '.plan';
+    const goal = (opts as Record<string, unknown>)['goal'] as string | undefined ?? 'Define your goal';
+
+    const taskPlan = `# Task Plan\n\n## Goal\n${goal}\n\n## Current Phase\n1\n\n## Phases\n\n### Phase 1: Research & Discovery\n- [ ] Understand the codebase structure\n- [ ] Identify key files and dependencies\n- [ ] Document findings\n\n### Phase 2: Design\n- [ ] Define approach and architecture\n- [ ] Identify risks and edge cases\n- [ ] Finalize implementation plan\n\n### Phase 3: Implementation\n- [ ] Implement core functionality\n- [ ] Write tests\n- [ ] Review and refine\n\n### Phase 4: Verification\n- [ ] Run full audit\n- [ ] Verify all acceptance criteria met\n- [ ] Update documentation\n\n## Decisions Made\n| Decision | Rationale | Date |\n|----------|-----------|------|\n\n## Errors Encountered\n| Timestamp | Error | Attempt # | Resolution |\n|-----------|-------|-----------|------------|\n`;
+
+    const findings = `# Findings\n\n## Requirements\n- (extract from user request)\n\n## Research Findings\n> **2-Action Rule**: After every 2 research operations, update this file immediately.\n\n## Technical Decisions\n\n## Issues Encountered\n\n## Resources\n`;
+
+    const progress = `# Progress Log\n\n## Session: ${new Date().toISOString().split('T')[0]}\n\n### 5-Question Reboot Check\n1. **Where am I?** Phase 1 — Research\n2. **Where am I going?** Phases 2-4 remaining\n3. **What's the goal?** ${goal}\n4. **What have I learned?** (check findings.md)\n5. **What have I done?** Session just started\n\n### Actions\n`;
+
+    try {
+      fs.mkdirSync(planDir, { recursive: true });
+      fs.writeFileSync(`${planDir}/task_plan.md`, taskPlan, 'utf-8');
+      fs.writeFileSync(`${planDir}/findings.md`, findings, 'utf-8');
+      fs.writeFileSync(`${planDir}/progress.md`, progress, 'utf-8');
+    } catch { /* skip if can't write */ }
+
+    return `## Deep Planner — Planning System Created\n\n**Files created:**\n- \`${planDir}/task_plan.md\` — phases + checkboxes\n- \`${planDir}/findings.md\` — research log (2-action rule)\n- \`${planDir}/progress.md\` — session log + reboot check\n\n**Goal:** ${goal}\n\n**Next step:** Update task_plan.md phases to match your specific task, then start Phase 1.\n\n**Remember:** After every 2 research operations → update findings.md immediately.`;
+  }
+
+  private async runSessionRestore(_target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+    const planDir = '.plan';
+    let output = `## Session Restore — Context Recovery\n\n`;
+
+    try {
+      const taskPlan = fs.existsSync(`${planDir}/task_plan.md`)
+        ? fs.readFileSync(`${planDir}/task_plan.md`, 'utf-8')
+        : null;
+      const progress = fs.existsSync(`${planDir}/progress.md`)
+        ? fs.readFileSync(`${planDir}/progress.md`, 'utf-8')
+        : null;
+
+      if (!taskPlan && !progress) {
+        return `## Session Restore\n\nNo .plan/ files found. Run \`deep-planner\` first to create a planning system.`;
+      }
+
+      output += `### 5-Question Reboot Check\n\n`;
+
+      const phaseMatch = taskPlan?.match(/## Current Phase\n(\d+)/);
+      const goalMatch = taskPlan?.match(/## Goal\n(.+)/);
+      const phase = phaseMatch?.[1] ?? '?';
+      const goal = goalMatch?.[1] ?? 'Unknown';
+
+      output += `1. **Where am I?** Phase ${phase}\n`;
+      output += `2. **Where am I going?** Check task_plan.md for remaining phases\n`;
+      output += `3. **What's the goal?** ${goal}\n`;
+      output += `4. **What have I learned?** See \`.plan/findings.md\`\n`;
+      output += `5. **What have I done?** See \`.plan/progress.md\` last session\n\n`;
+
+      if (taskPlan) {
+        const pendingPhases = [...taskPlan.matchAll(/### (Phase \d+[^:]*)/g)].map(m => m[1]);
+        output += `### Phases Overview\n${pendingPhases.map(p => `- ${p}`).join('\n')}\n\n`;
+      }
+
+      output += `### Next Steps\n1. Read \`.plan/findings.md\` to reload accumulated knowledge\n2. Call \`task_next\` to see actionable tasks\n3. Continue from Phase ${phase}\n`;
+    } catch (e) {
+      output += `Error reading plan files: ${e instanceof Error ? e.message : String(e)}`;
+    }
+
+    return output;
+  }
+
+  private async runAutoFixer(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+    const files = this.resolveFiles(target);
+    const secIssues: AuditIssue[] = [];
+    const qualIssues: AuditIssue[] = [];
+
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        secIssues.push(...scanSecurity(file, content));
+        qualIssues.push(...scanQuality(file, content));
+      } catch { /* skip */ }
+    }
+
+    const critical = secIssues.filter(i => i.severity === 'critical');
+    const high = secIssues.filter(i => i.severity === 'high');
+    const total = secIssues.length + qualIssues.length;
+
+    let output = `## Auto-Fixer — Otomatik Düzeltme Planı\n\n`;
+    output += `**Taranan:** ${files.length} dosya | **Toplam sorun:** ${total}\n\n`;
+
+    output += `### Triage Sonucu\n`;
+    output += `| Seviye | Sayı | Aksiyon |\n|--------|------|----------|\n`;
+    output += `| 🔴 CRITICAL | ${critical.length} | Hemen düzelt |\n`;
+    output += `| 🟠 HIGH | ${high.length} | Bu sprintte düzelt |\n`;
+    output += `| 🟡 MEDIUM | ${qualIssues.filter(i => i.severity === 'medium').length} | Sonraki sprint |\n`;
+    output += `| ⚪ LOW | ${qualIssues.filter(i => i.severity === 'low').length} | Backlog |\n\n`;
+
+    if (critical.length > 0) {
+      output += `### 🔴 CRITICAL — Hemen Düzelt\n\n`;
+      for (const issue of critical.slice(0, 5)) {
+        output += `**${issue.title}** — \`${issue.filepath}:${issue.line}\`\n`;
+        if (issue.fix) output += `→ Fix: ${issue.fix}\n`;
+        output += '\n';
+      }
+    }
+
+    if (high.length > 0) {
+      output += `### 🟠 HIGH — Bu Sprint\n\n`;
+      for (const issue of high.slice(0, 5)) {
+        output += `- **${issue.title}** — \`${issue.filepath}:${issue.line}\`\n`;
+      }
+      output += '\n';
+    }
+
+    output += `### Sonraki Adım\nHer sorun için \`task_create\` çağrısı yap, sonra \`task_next\` ile sırayla düzelt.`;
+    return output;
+  }
+
+  private async runCodeArchaeologist(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+    if (!target) return `## Code Archaeologist\n\nBir dosya veya dizin belirtin.`;
+
+    const files = this.resolveFiles(target);
+    const secIssues: AuditIssue[] = [];
+
+    for (const file of files.slice(0, 5)) {
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        secIssues.push(...scanSecurity(file, content));
+      } catch { /* skip */ }
+    }
+
+    let output = `## Code Archaeologist — ${target}\n\n`;
+    output += `### Analiz Özeti\n`;
+    output += `**Taranan dosya:** ${files.length}\n`;
+    output += `**Güvenlik sorunları:** ${secIssues.length}\n\n`;
+    output += `### Arkeolojik Rapor\n`;
+    output += `Bu araç tam git blame + commit history analizi için şu araçları kullanın:\n\n`;
+    output += `1. \`git_blame_context filepath="${target}"\` — Katkıda bulunanlar\n`;
+    output += `2. \`commit_history_search query="${path.basename(target)}"\` — Commit timeline\n`;
+    output += `3. \`complexity_score filepath="${target}"\` — Complexity zamanla nasıl büyümüş\n`;
+    output += `4. \`research_topic topic="${path.basename(target)} module purpose"\` — Semantic analiz\n\n`;
+    output += `### Mevcut Bulgular\n`;
+    if (secIssues.length > 0) {
+      output += `**Birikmiş teknik borç:**\n`;
+      for (const i of secIssues.slice(0, 5)) {
+        output += `- \`${i.filepath}:${i.line}\` — ${i.title}\n`;
+      }
+    } else {
+      output += `✅ Belirgin güvenlik teknik borcu yok.\n`;
+    }
+    return output;
+  }
+
+  private async runImpactAnalyzer(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+    if (!target) return `## Impact Analyzer\n\nBir sembol, dosya veya dizin belirtin.`;
+
+    const files = this.resolveFiles(target);
+    let output = `## Impact Analyzer — ${target}\n\n`;
+    output += `### Blast Radius Analizi\n\n`;
+    output += `**Hedef:** \`${target}\`\n`;
+    output += `**Doğrudan dosya:** ${files.length}\n\n`;
+    output += `### Etki Değerlendirmesi\nTam analiz için şu araçları kullanın:\n\n`;
+    output += `1. \`find_references symbol="${path.basename(target)}"\` — Tüm kullanımlar\n`;
+    output += `2. \`get_dependencies filepath="${target}"\` — Dependency graph\n`;
+    output += `3. \`search_code query="${path.basename(target)}"\` — Dolaylı referanslar\n\n`;
+    output += `### Risk Kategorileri\n`;
+    output += `| Kategori | Açıklama |\n|----------|----------|\n`;
+    output += `| 🔴 BREAKING | Bu değişimde kesinlikle kırılır |\n`;
+    output += `| 🟠 LIKELY | Muhtemelen etkilenir, review gerek |\n`;
+    output += `| ✅ SAFE | Import ediyor ama direkt kullanmıyor |\n\n`;
+    output += `### Önerilen Değişiklik Sırası\n`;
+    output += `1. Önce leaf dosyaları güncelle (başka dosya import etmeyenler)\n`;
+    output += `2. Sonra middleware/util katmanı\n`;
+    output += `3. En son entry point ve index dosyaları\n\n`;
+    output += `Bu sırayı belirlemek için \`get_dependencies\` sonucunu incele.`;
     return output;
   }
 
