@@ -1,5 +1,4 @@
 node_modules/
-dist/
 .audit-data/
 *.js.map
 *.d.ts
