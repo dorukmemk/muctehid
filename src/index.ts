@@ -983,87 +983,431 @@ function buildRequirementsPrompt(
   codebaseCtx: string,
   repoFiles: string,
 ): string {
-  return `# Feature Spec — Requirements Phase
+  // Extract search keywords from name and description
+  const keywords = [name, ...description.split(/\s+/).filter(w => w.length > 4)].slice(0, 5);
+  const searchTerms = keywords.map(k => `\`search_code("${k}")\``).join(', ');
 
-You are a senior software architect helping define requirements for a new feature. Your job is to transform the rough idea below into a precise, complete requirements document.
+  return `# SPEC REQUIREMENTS PHASE — "${name}"
 
-## Feature Input
-
-**Name:** ${name}
-**Spec ID:** ${specId}
-**Description:** ${description}
-${codebaseCtx ? `\n## Relevant Codebase Context\n\`\`\`\n${codebaseCtx.slice(0, 1800)}\n\`\`\`` : ''}
-${repoFiles ? `\n## Repository Structure (reference)\n${repoFiles}` : ''}
+> Spec ID: \`${specId}\`
+> Description: ${description}
 
 ---
 
-## Your Task
+## ⚠️ MANDATORY: RESEARCH BEFORE WRITING
 
-Write a complete \`requirements.md\` document following the exact format below. Think through:
-- Edge cases and failure scenarios
-- User experience flows (happy path AND error path)
-- Technical constraints from the existing codebase
-- Security implications
-- Performance considerations
+**You MUST call the following tools BEFORE writing a single word of requirements.md.**
+Do NOT skip this phase. Do NOT write requirements based on assumptions.
+
+### Step 1 — Search for existing related code
+
+Call these tools NOW, in sequence:
+
+1. \`search_code("${name}")\` — find files related to this feature by name
+2. \`search_code("${keywords[0]}")\` — find usages of the core concept
+${keywords[1] ? `3. \`search_code("${keywords[1]}")\` — find related patterns` : ''}
+${keywords[2] ? `4. \`search_code("${keywords[2]}")\` — find adjacent functionality` : ''}
+
+### Step 2 — Read the most relevant files
+
+After search results come back:
+- Call \`get_context(filepath="<most relevant file from results>")\` for the TOP 2-3 most relevant files
+- If you find an existing similar feature, read its implementation file fully
+
+### Step 3 — Check what already exists
+
+- Call \`find_references("${name.split(/[-_\s]/)[0]}")\` — see where the core entity is referenced
+- Look for: existing types, existing routes/handlers, existing DB schema, existing components
+
+### Step 4 — Synthesize findings (REQUIRED before writing)
+
+Before writing requirements, explicitly state in your response:
+- "I found these related files: ..."
+- "The existing codebase already has: ..."
+- "These patterns are used: ..."
+- "This feature will need to integrate with: ..."
+
+Only AFTER completing Steps 1-4, proceed to writing.
+
+---
+${codebaseCtx ? `\n## Initial Context (pre-fetched by MCP)\n\`\`\`\n${codebaseCtx.slice(0, 1500)}\n\`\`\`\n` : ''}
+${repoFiles ? `\n## Repository Files (start your research here)\n${repoFiles}\n` : ''}
 
 ---
 
-## Required Format
+## Writing Requirements
+
+After your research, write \`requirements.md\` using ONLY information grounded in:
+1. What you found in the codebase
+2. The feature description above
+3. Reasonable inference clearly marked as such
+
+**Format:**
 
 \`\`\`markdown
 # Requirements Document
 
 ## Introduction
 
-[Write 3-5 sentences. What is being built? Why is it needed? Who will use it? What problem does it solve?
-Be concrete — reference the actual feature, not generic descriptions.]
+[3-5 sentences grounded in reality. Reference ACTUAL files/patterns you found.
+E.g.: "This feature extends the existing UserRepository at src/lib/user/repository.ts..."
+NOT generic filler. If you didn't find related code, say that explicitly.]
 
 ## Requirements
 
-### Requirement 1: [Descriptive title for this requirement group]
+### Requirement 1: [Title derived from the description — not generic]
 
-**User Story:** As a [specific role], I want [specific capability], so that [measurable benefit].
+**User Story:** As a [specific role found or inferred from context], I want [specific capability from description], so that [concrete benefit].
 
 #### Acceptance Criteria
 
-1. WHEN [triggering event or user action] THEN the system SHALL [specific, measurable response]
+1. WHEN [specific event matching this codebase's patterns] THEN the system SHALL [measurable response]
 2. WHEN [event] AND [precondition] THEN the system SHALL [response]
-3. IF [precondition is true] THEN the system SHALL [response]
-4. IF [error condition] THEN the system SHALL [display/return/handle] [specific error behavior]
-5. WHEN [edge case] THEN the system SHALL [graceful handling]
+3. IF [error condition specific to this feature] THEN the system SHALL [specific error handling]
+4. WHEN [edge case] THEN the system SHALL [graceful behavior]
 
-### Requirement 2: [Next requirement group title]
+### Requirement 2: [Next functional area]
 
 **User Story:** As a [role], I want [capability], so that [benefit].
 
 #### Acceptance Criteria
 
 1. WHEN [event] THEN the system SHALL [response]
-2. WHEN [event] THEN the system SHALL [response]
-[Continue for all distinct functional areas — aim for 3-6 requirement groups]
+2. IF [precondition] THEN the system SHALL [response]
+3. WHEN [failure scenario] THEN the system SHALL [error response]
+
+[Add Requirement 3, 4, etc. for each distinct functional concern — min 3, max 8]
 \`\`\`
 
 ---
 
-## Writing Rules
+## Rules
 
-1. **Use EARS format exclusively** for acceptance criteria: \`WHEN/THEN SHALL\`, \`IF/THEN SHALL\`, \`WHILE/SHALL\`. Never use "Given/When/Then" or bullet descriptions.
-2. **Each SHALL statement must be testable** — avoid "should work correctly", "should be fast". Use measurable outcomes.
-3. **Cover error cases**: every happy-path requirement needs at least one error/edge-case criterion.
-4. **No placeholders** — every field must contain real, feature-specific content derived from the description.
-5. **Language**: match the description language (Turkish description → Turkish document, English → English).
-6. **Requirements count**: minimum 3 requirement groups, maximum 8. Each group needs minimum 3 acceptance criteria.
-7. **Be specific about roles**: "developer", "admin user", "unauthenticated visitor" — not just "user".
+1. **EARS format only**: \`WHEN/THEN SHALL\`, \`IF/THEN SHALL\`, \`WHILE/SHALL\` — no "Given/When/Then"
+2. **No placeholders** — if you don't know, say "TBD: [reason]", not "[something]"
+3. **Grounded in research** — reference actual files/patterns you found in Steps 1-4
+4. **Language**: match the description language (Turkish → Turkish, English → English)
+5. **Min 3 requirements, each with min 3 acceptance criteria**
+6. **Cover errors**: every happy path needs at least one failure/edge-case criterion
 
-## Save Instructions
+---
 
-After writing the complete document, call:
-\`spec_generate specId="${specId}" phase="requirements" content="<your full markdown here>"\`
+## ✅ Save When Done
 
-Do not summarize or explain — write the full document and save it immediately.`;
+After completing research AND writing, call:
+\`\`\`
+spec_generate specId="${specId}" phase="requirements" content="<your complete markdown>"
+\`\`\`
+
+**Then immediately call \`spec_generate specId="${specId}" phase="design"\` to get the design prompt.**`;
 }
 
 function buildDesignPrompt(
+  name: string,
+  specId: string,
+  requirementsContent: string,
+  _designPath: string,
+  archContext: string,
+): string {
+  return `# SPEC DESIGN PHASE — "${name}"
+
+> Spec ID: \`${specId}\`
+
+---
+
+## ⚠️ MANDATORY: DEEP CODEBASE RESEARCH BEFORE DESIGNING
+
+You MUST investigate the actual codebase architecture before writing design.md.
+Do NOT design based on assumptions. Every component path must be real.
+
+### Step 1 — Understand existing architecture
+
+Call these tools NOW:
+
+1. \`get_context(filepath="src")\` or \`search_code("repository")\` — find the architectural pattern (repository? service layer? server actions? tRPC?)
+2. \`search_code("interface")\` — find how TypeScript types/interfaces are defined in this codebase
+3. \`search_code("api")\` or \`search_code("route")\` — find how API endpoints/routes are structured
+
+### Step 2 — Find similar existing features
+
+Call these tools:
+1. Look at the requirements below — find the core entity name. Call \`search_code("<entity>")\`
+2. Call \`get_context(filepath="<most-similar-existing-feature-file>")\` — read a similar feature's implementation
+3. Check: Does this project use Prisma? Drizzle? Raw SQL? Call \`search_code("schema")\` to verify
+
+### Step 3 — Map the real file structure
+
+Before writing the Components table, call:
+1. \`find_references("<CoreEntityName>")\` — see where similar entities are imported/used
+2. Look at how existing similar features are organized (what folders, what file naming convention)
+
+### Step 4 — State your findings
+
+Before writing design.md, explicitly say:
+- "This codebase uses [pattern] architecture"
+- "Existing similar feature: [file path]"
+- "ORM/DB: [Prisma/Drizzle/other]"
+- "API pattern: [Next.js routes/tRPC/Express/etc]"
+- "Auth: [how it's done]"
+
+---
+
+## Approved Requirements
+
+\`\`\`markdown
+${requirementsContent.slice(0, 2500)}
+\`\`\`
+${archContext ? `\n## MCP-Detected Patterns\n${archContext}\n(Verify these with your own research above)\n` : ''}
+
+---
+
+## Writing the Design
+
+After research, write \`design.md\` using ONLY real file paths and patterns you verified:
+
+\`\`\`markdown
+# Design Document: ${name}
+
+> Spec ID: ${specId}
+
+## Overview
+
+[3-5 sentences. What approach? Why? What are the key decisions?
+Reference ACTUAL patterns you found: "Following the same Repository + Service pattern as src/lib/[existing]..."]
+
+## Architecture
+
+\`\`\`mermaid
+graph TD
+    [Real component names you found] --> [Real service names]
+    [Service] --> [(Real DB/ORM)]
+\`\`\`
+
+**Pattern:** [The ACTUAL pattern used in this codebase — from your research]
+**Layers:** [Actual layer names matching existing code]
+
+Architectural decisions:
+- [Decision] — chosen because [found evidence in codebase]
+- [Decision] — rationale based on [existing pattern at file X]
+
+## Components and Interfaces
+
+| File Path | Component | Responsibility | Interface |
+|-----------|-----------|----------------|-----------|
+| \`[REAL path matching codebase conventions]\` | [Component] | [What it does] | [Interface name] |
+[Every path must follow the naming convention you found in your research. Min 3 rows.]
+
+## Data Models
+
+\`\`\`typescript
+// Matching the type convention at [actual file you found]
+interface ${name.replace(/[-\s]/g, '')} {
+  id: string; // or number — match what the ORM uses
+  // Fields derived from acceptance criteria in requirements
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+type Create${name.replace(/[-\s]/g, '')}Input = Omit<${name.replace(/[-\s]/g, '')}, 'id' | 'createdAt' | 'updatedAt'>;
+type Update${name.replace(/[-\s]/g, '')}Input = Partial<Create${name.replace(/[-\s]/g, '')}Input>;
+\`\`\`
+
+## Error Handling
+
+| Scenario | Error Type | HTTP Status | Message | Recovery |
+|----------|-----------|-------------|---------|----------|
+| Validation failure | \`ValidationError\` | 400 | Field-specific errors | Fix and retry |
+| Not found | \`NotFoundError\` | 404 | "Not found" | Empty state |
+| Unauthorized | \`AuthError\` | 401 | "Auth required" | Redirect login |
+| Forbidden | \`PermissionError\` | 403 | "Insufficient permissions" | Show error |
+| Server error | \`InternalError\` | 500 | "Something went wrong" | Retry |
+
+## Testing Strategy
+
+### Unit Tests
+- \`[Real path].test.ts\` — [what is tested]
+
+### Integration Tests
+- \`[Real path].test.ts\` — full request/response cycle
+
+### Test Cases
+1. Happy path for each operation
+2. Validation failures (per acceptance criteria)
+3. Auth enforcement
+4. Error propagation
+
+## Open Questions
+
+- [Unresolved decision or blocker — or "None" if none]
+\`\`\`
+
+---
+
+## Rules
+
+1. **Real file paths only** — match naming conventions you found in Step 2-3
+2. **No generic placeholders** — every component row needs a real path
+3. **Mermaid diagram is required** if more than 2 components interact
+4. **Decisions cite evidence** — "chosen because [found at file X]"
+5. **Language**: match the requirements document language
+
+---
+
+## ✅ Save When Done
+
+\`\`\`
+spec_generate specId="${specId}" phase="design" content="<your complete markdown>"
+\`\`\`
+
+**Then immediately call \`spec_generate specId="${specId}" phase="tasks"\` to get the tasks prompt.**`;
+}
+
+function buildTasksPrompt(
+  name: string,
+  specId: string,
+  requirementsContent: string,
+  designContent: string,
+  _tasksPath: string,
+): string {
+  return `# SPEC TASKS PHASE — "${name}"
+
+> Spec ID: \`${specId}\`
+
+---
+
+## ⚠️ MANDATORY: VERIFY IMPLEMENTATION PATTERNS BEFORE WRITING
+
+You are about to write an implementation plan. Every task must reference REAL files.
+Do NOT invent file paths. Research first.
+
+### Step 1 — Verify file paths from design.md
+
+The design listed component file paths. Verify they follow actual codebase conventions:
+1. \`search_code("test")\` or \`search_code(".test.ts")\` — find how tests are organized in this project
+2. \`get_context(filepath="<first component path from design>")\` — does this pattern exist?
+3. Look for: existing test files, existing similar feature tests
+
+### Step 2 — Find testing patterns
+
+1. Call \`search_code("describe")\` or \`search_code("it(")\` — find test style (jest/vitest/etc.)
+2. Note the test file naming: \`*.test.ts\`? \`*.spec.ts\`? Adjacent or in \`__tests__\`?
+
+### Step 3 — Check build/run commands
+
+1. Does this codebase have a \`package.json\` test script? What is it?
+2. Note this for "Verify" sections in tasks
+
+---
+
+## Approved Requirements
+
+\`\`\`markdown
+${requirementsContent.slice(0, 1200)}
+\`\`\`
+
+## Approved Design
+
+\`\`\`markdown
+${designContent.slice(0, 1400)}
+\`\`\`
+
+---
+
+## Writing the Implementation Plan
+
+Write tasks as **prompts for a code-generation agent** that will implement each step.
+Each task = one complete coding concern. TDD order: types → data layer → business logic → API → UI → wire-up.
+
+\`\`\`markdown
+# Implementation Plan: ${name}
+
+> Spec ID: ${specId}
+
+---
+
+- [ ] 1. Set up types and contracts
+  - Create \`[path from design]/types.ts\` with all TypeScript interfaces from design.md
+  - Export: main entity type, Create/Update input types, response shape
+  - No implementation — types only
+  - _Requirements: 1.1, 1.2_
+
+- [ ] 2. Implement data layer
+  - [ ] 2.1 Create repository
+    - Implement \`[path from design]/repository.ts\` with CRUD methods
+    - Use [ORM from design] — match pattern of \`[existing similar repo file]\`
+    - Write unit tests in \`[test path]\` covering: create, findById, findAll, update, delete, not-found
+    - _Requirements: [specific IDs]_
+
+  - [ ] 2.2 Add validation
+    - Add input validation using [validation library found in codebase]
+    - Cover: required fields, format rules, boundary values from acceptance criteria
+    - Unit test: valid inputs pass, invalid inputs throw with correct message
+    - _Requirements: [specific IDs]_
+
+- [ ] 3. Business logic
+  - [ ] 3.1 Service layer
+    - Implement \`[path from design]/service.ts\` — orchestrates repository + validation
+    - Business rules: [specific rules from requirements acceptance criteria]
+    - Error mapping: ValidationError → 400, NotFoundError → 404, etc.
+    - Unit tests mocking repository — test each business rule
+    - _Requirements: [specific IDs]_
+
+  - [ ] 3.2 Auth integration
+    - Wire auth check matching \`[existing auth pattern found in research]\`
+    - Test: authenticated user succeeds, unauthenticated gets 401
+    - _Requirements: [specific IDs]_
+
+- [ ] 4. API/interface layer
+  - [ ] 4.1 Create route handler
+    - Implement \`[path from design]/route.ts\` (or equivalent)
+    - Parse body → validate → call service → shape response matching existing API format
+    - _Requirements: [specific IDs]_
+
+  - [ ] 4.2 Integration tests
+    - Test full request → response cycle with test DB/mocks
+    - Cover: 200 success, 400 validation, 404 not-found, 401 auth
+    - _Requirements: [all relevant]_
+
+- [ ] 5. UI layer (if required by design)
+  - [ ] 5.1 Data hook
+    - \`[path from design]/use-[name].ts\` — loading/error/data states
+    - _Requirements: [specific IDs]_
+
+  - [ ] 5.2 Form/display component
+    - Implement with real data (no mocks), validation feedback
+    - _Requirements: [specific IDs]_
+
+- [ ] 6. End-to-end integration
+  - Connect all layers: UI → hook → API → service → repository
+  - Verify all acceptance criteria from requirements.md are covered by at least one test
+  - _Requirements: all_
+\`\`\`
+
+---
+
+## Task Writing Rules
+
+1. **Checkbox format**: every item is \`- [ ] N.\` or \`- [ ] N.M\`
+2. **Real file paths**: every path must come from design.md or your research
+3. **TDD order**: types → data → business logic → API → UI → wiring
+4. **Each task references requirements**: \`_Requirements: X.X, Y.Y_\`
+5. **Tests are in the same task** as the code they test — not a separate step
+6. **No orphaned code** — everything created must be consumed by the final task
+7. **No non-coding tasks** (no deployment, no user testing, no docs)
+8. **Max 2 levels** of hierarchy
+
+---
+
+## ✅ Save When Done
+
+\`\`\`
+spec_generate specId="${specId}" phase="tasks" content="<your complete markdown>"
+\`\`\`
+
+After saving, call \`task_next\` to begin implementation.`;
+}
+
+function _DELETED_buildDesignPrompt_OLD(
   name: string,
   specId: string,
   requirementsContent: string,
@@ -1220,7 +1564,7 @@ After writing the complete document, call:
 Do not summarize or explain — write the full document and save it immediately.`;
 }
 
-function buildTasksPrompt(
+function _DELETED_buildTasksPrompt_OLD(
   name: string,
   specId: string,
   requirementsContent: string,
