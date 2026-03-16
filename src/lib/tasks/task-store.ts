@@ -152,7 +152,7 @@ export class TaskStore {
     if (filter?.specId) { sql += ' AND spec_id = ?'; params.push(filter.specId); }
     if (filter?.tag) { sql += ' AND tags LIKE ?'; params.push(`%${filter.tag}%`); }
 
-    sql += ' ORDER BY CASE priority WHEN "critical" THEN 0 WHEN "high" THEN 1 WHEN "medium" THEN 2 ELSE 3 END, created_at ASC';
+    sql += " ORDER BY CASE priority WHEN 'critical' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 ELSE 3 END, created_at ASC";
 
     const rows = this.db.prepare(sql).all(...params) as Record<string, unknown>[];
     return rows.map(r => this.rowToTask(r));

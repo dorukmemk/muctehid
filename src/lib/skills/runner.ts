@@ -65,6 +65,18 @@ export class SkillRunner {
         return this.runCodeArchaeologist(target, opts);
       case 'impact-analyzer':
         return this.runImpactAnalyzer(target, opts);
+      case 'test-generator':
+        return this.runTestGenerator(target, opts);
+      case 'doc-generator':
+        return this.runDocGenerator(target, opts);
+      case 'accessibility-check':
+        return this.runAccessibilityCheck(target, opts);
+      case 'license-scan':
+        return this.runLicenseScan(target, opts);
+      case 'refactor-suggest':
+        return this.runRefactorSuggest(target, opts);
+      case 'feature-planner':
+        return this.runFeaturePlanner(opts);
       default:
         // Generic: return skill instructions with context
         return this.runGeneric(skill, opts);
@@ -266,61 +278,170 @@ export class SkillRunner {
 
   private async runDependencyRisk(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
     const pkgPath = target
-      ? path.join(target, 'package.json')
+      ? (fs.existsSync(path.join(target, 'package.json')) ? path.join(target, 'package.json') : target)
       : 'package.json';
 
     if (!fs.existsSync(pkgPath)) {
-      return '## Dependency Risk\n\nNo package.json found.';
+      return '## Dependency Risk\n\npackage.json bulunamadı. `path` parametresi ile dizini belirtin.';
     }
 
     try {
-      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'));
-      const deps = { ...pkg.dependencies, ...pkg.devDependencies };
-      const count = Object.keys(deps).length;
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
+      const prodDeps = (pkg.dependencies ?? {}) as Record<string, string>;
+      const devDeps = (pkg.devDependencies ?? {}) as Record<string, string>;
+      const allDeps = { ...prodDeps, ...devDeps };
+      const count = Object.keys(allDeps).length;
 
-      let output = `## Dependency Risk Analysis\n\n`;
-      output += `**Total dependencies:** ${count}\n\n`;
-      output += `**Recommendation:** Run \`npm audit\` for CVE scanning.\n\n`;
-      output += `### Dependencies\n\`\`\`\n`;
-      output += Object.entries(deps).map(([k, v]) => `${k}: ${v}`).join('\n');
-      output += `\n\`\`\`\n`;
+      // Known risky packages / deprecated patterns
+      const KNOWN_RISKY: Record<string, string> = {
+        'event-stream': '⛔ Malware tarihi var (2018 supply chain saldırısı)',
+        'node-uuid': '⚠️ Deprecated — uuid kullanın',
+        'request': '⚠️ Archived/unmaintained — node-fetch veya undici kullanın',
+        'lodash': '⚠️ Büyük bundle — tree-shake\'lenebilen lodash-es veya native kullanın',
+        'moment': '⚠️ Deprecated — date-fns veya dayjs kullanın',
+        'left-pad': '⚠️ Tarihi tehlike (2016 unpublish olayı) — String.padStart kullanın',
+        'colors': '⚠️ Maintainer sabotaj yaşandı — chalk kullanın',
+        'faker': '⚠️ Eski sürümler sabote edildi — @faker-js/faker kullanın',
+        'crypto': '⚠️ Built-in Node.js ile çakışır — paket adını kontrol edin',
+        'minimist': '⚠️ Prototype pollution CVE\'leri var — yeni sürüm veya yargs kullanın',
+      };
+
+      const risky: Array<{ name: string; version: string; reason: string; isProd: boolean }> = [];
+      const pinned: string[] = [];
+      const unpinned: string[] = [];
+
+      for (const [name, version] of Object.entries(allDeps)) {
+        if (KNOWN_RISKY[name]) {
+          risky.push({ name, version, reason: KNOWN_RISKY[name], isProd: name in prodDeps });
+        }
+        if (/^\d/.test(version) || version.startsWith('=')) {
+          pinned.push(`${name}@${version}`);
+        } else if (version.startsWith('^') || version.startsWith('~')) {
+          // Fine — semver range
+        } else if (version.startsWith('*') || version === 'latest') {
+          unpinned.push(`${name}@${version}`);
+        }
+      }
+
+      let output = `## Dependency Risk Analizi\n\n`;
+      output += `**Proje:** ${pkg.name ?? '(unknown)'} v${pkg.version ?? '?'}\n`;
+      output += `**Toplam bağımlılık:** ${count} (prod: ${Object.keys(prodDeps).length}, dev: ${Object.keys(devDeps).length})\n\n`;
+
+      // Risk summary table
+      output += `### Risk Özeti\n\n| Kategori | Durum |\n|----------|-------|\n`;
+      output += `| ⛔ Bilinen tehlikeli paket | ${risky.filter(r => r.reason.startsWith('⛔')).length} |\n`;
+      output += `| ⚠️ Deprecated/riskli paket | ${risky.filter(r => r.reason.startsWith('⚠️')).length} |\n`;
+      output += `| 📌 Sürüm sabitlenmiş (=x.y.z) | ${pinned.length} |\n`;
+      output += `| ⚡ Wildcard sürüm (*,latest) | ${unpinned.length} |\n\n`;
+
+      if (unpinned.length > 0) {
+        output += `### ⚡ Wildcard Sürümler (RİSKLİ)\n\nBu paketler her install'da farklı sürüm yükleyebilir:\n\n`;
+        for (const p of unpinned) output += `- \`${p}\`\n`;
+        output += '\n';
+      }
+
+      if (risky.length > 0) {
+        output += `### ⚠️ Riskli / Deprecated Paketler\n\n| Paket | Sürüm | Risk | Prod? |\n|-------|-------|------|-------|\n`;
+        for (const r of risky) {
+          output += `| \`${r.name}\` | ${r.version} | ${r.reason} | ${r.isProd ? 'Evet' : 'Hayır'} |\n`;
+        }
+        output += '\n';
+      }
+
+      if (risky.length === 0 && unpinned.length === 0) {
+        output += `✅ Bilinen riskli paket bulunamadı.\n\n`;
+      }
+
+      output += `### Sonraki Adımlar\n`;
+      output += `1. \`npm audit\` — CVE taraması yapın\n`;
+      output += `2. \`npm outdated\` — Güncellenebilir paketleri görün\n`;
+      output += `3. \`npx depcheck\` — Kullanılmayan bağımlılıkları tespit edin\n`;
+      output += `4. \`npx license-checker\` — Lisans uyumluluğunu kontrol edin\n`;
+
       return output;
-    } catch {
-      return '## Dependency Risk\n\nFailed to parse package.json.';
+    } catch (e) {
+      return `## Dependency Risk\n\npackage.json parse hatası: ${e instanceof Error ? e.message : String(e)}`;
     }
   }
 
   private async runPerformanceAudit(target: string | undefined): Promise<string> {
-    const patterns = [
-      { pattern: /for.*of.*Object\.keys|for.*in\s+/, label: 'Potentially slow object iteration' },
-      { pattern: /\.forEach\(.*async/, label: 'async in forEach (use Promise.all + map)' },
-      { pattern: /JSON\.parse\(JSON\.stringify/, label: 'Expensive deep clone (use structuredClone)' },
-      { pattern: /\+\s*['"`][^'"`]*['"`]\s*\+/, label: 'String concatenation in loop (use template literal)' },
+    interface PerfPattern { pattern: RegExp; label: string; severity: 'critical' | 'high' | 'medium' | 'low'; fix: string; }
+    const patterns: PerfPattern[] = [
+      // Async anti-patterns
+      { pattern: /\.forEach\s*\(\s*async/, severity: 'high', label: 'async forEach (Promise\'lar paralel çalışmaz)', fix: 'Promise.all(arr.map(async item => ...)) kullanın' },
+      { pattern: /await.*for\s*\(.*of/, severity: 'medium', label: 'Seri await döngüsü (N+1 pattern)', fix: 'Promise.all ile paralelleştirin' },
+      { pattern: /new Promise\s*\(\s*\(\s*resolve/, severity: 'low', label: 'Gereksiz Promise sarmalama', fix: 'Async/await veya doğrudan Promise döndürün' },
+      // Memory/CPU
+      { pattern: /JSON\.parse\s*\(\s*JSON\.stringify/, severity: 'high', label: 'Pahalı deep clone (JSON round-trip)', fix: 'structuredClone() kullanın (Node 17+)' },
+      { pattern: /setInterval|setTimeout.*0[^)]/, severity: 'medium', label: 'setTimeout(fn, 0) — CPU busy wait', fix: 'setImmediate() veya queueMicrotask() kullanın' },
+      { pattern: /while\s*\(\s*true\s*\)/, severity: 'critical', label: 'Sonsuz döngü (CPU %100 riski)', fix: 'Break condition veya async iteration kullanın' },
+      // String/Array
+      { pattern: /\+\s*['"`][^'"`]{0,50}['"`]\s*\+/, severity: 'low', label: 'String birleştirme (+ operator)', fix: 'Template literal kullanın: `${var}`' },
+      { pattern: /\.filter\(.*\)\.map\(|\.map\(.*\)\.filter\(/, severity: 'medium', label: 'Zincirleme filter+map (çift iterasyon)', fix: '.reduce() veya tek geçişte işleyin' },
+      { pattern: /Array\.from\s*\(\s*\{.*length/, severity: 'low', label: 'Array.from({length}) — alternatif var', fix: 'Array.from({length: n}, (_, i) => i) veya [...Array(n)]' },
+      // DB / IO patterns
+      { pattern: /for.*await.*find|for.*await.*query|for.*await.*get/, severity: 'critical', label: 'N+1 veritabanı sorgusu döngüsü', fix: 'Batch query veya JOIN kullanın' },
+      { pattern: /readFileSync|writeFileSync/, severity: 'medium', label: 'Senkron dosya I/O (event loop bloklar)', fix: 'fs.promises.readFile / writeFile kullanın' },
+      { pattern: /require\s*\(/, severity: 'low', label: 'CommonJS require (ES module\'de)', fix: 'import kullanın veya lazy load uygulayın' },
+      // React specific
+      { pattern: /useEffect\s*\([^,)]+\)/, severity: 'medium', label: 'useEffect dependency array eksik', fix: 'İkinci argüman olarak dependency array ekleyin' },
+      { pattern: /style\s*=\s*\{\s*\{/, severity: 'low', label: 'Inline style object (her render\'da yeni obje)', fix: 'useMemo veya CSS class kullanın' },
     ];
 
     const files = this.resolveFiles(target);
-    const results: string[] = [];
+    type FindingEntry = { file: string; line: number; label: string; severity: PerfPattern['severity']; fix: string };
+    const findings: FindingEntry[] = [];
 
     for (const file of files) {
       try {
         const lines = fs.readFileSync(file, 'utf-8').split('\n');
         for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          // Skip comment lines
+          if (/^\s*(\/\/|\/\*|\*)/.test(line)) continue;
           for (const p of patterns) {
-            if (p.pattern.test(lines[i])) {
-              results.push(`- **${file}:${i + 1}** — ${p.label}`);
+            if (p.pattern.test(line)) {
+              findings.push({ file, line: i + 1, label: p.label, severity: p.severity, fix: p.fix });
             }
           }
         }
       } catch { /* skip */ }
     }
 
+    const critical = findings.filter(f => f.severity === 'critical');
+    const high     = findings.filter(f => f.severity === 'high');
+    const medium   = findings.filter(f => f.severity === 'medium');
+    const low      = findings.filter(f => f.severity === 'low');
+
     let output = `## Performance Audit\n\n`;
-    output += `**Files analyzed:** ${files.length}\n\n`;
-    if (results.length === 0) {
-      output += '✅ No obvious performance issues detected.\n';
-    } else {
-      output += `### Issues Found (${results.length})\n\n${results.join('\n')}\n`;
+    output += `**Taranan dosya:** ${files.length} | **Sorun:** ${findings.length}`;
+    output += ` (🔴 ${critical.length} kritik, 🟠 ${high.length} yüksek, 🟡 ${medium.length} orta, ⚪ ${low.length} düşük)\n\n`;
+
+    if (findings.length === 0) {
+      output += '✅ Belirgin performans sorunu bulunamadı.\n';
+      return output;
     }
+
+    for (const [sev, group, emoji] of [
+      ['critical', critical, '🔴'],
+      ['high', high, '🟠'],
+      ['medium', medium, '🟡'],
+      ['low', low, '⚪'],
+    ] as const) {
+      if (group.length === 0) continue;
+      output += `### ${emoji} ${sev.toUpperCase()} (${group.length})\n\n`;
+      for (const f of group) {
+        output += `- **\`${f.file}:${f.line}\`** — ${f.label}\n  → ${f.fix}\n`;
+      }
+      output += '\n';
+    }
+
+    output += `### Önerilen Düzeltme Sırası\n`;
+    output += `1. N+1 sorgu döngülerini batch query ile değiştirin (en büyük etki)\n`;
+    output += `2. async forEach'leri Promise.all ile paralelleştirin\n`;
+    output += `3. Senkron dosya I/O'yu async'e taşıyın\n`;
+    output += `4. JSON.stringify/parse deep clone'larını structuredClone'a taşıyın\n`;
+
     return output;
   }
 
@@ -868,60 +989,750 @@ export class SkillRunner {
   private async runCodeArchaeologist(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
     if (!target) return `## Code Archaeologist\n\nBir dosya veya dizin belirtin.`;
 
-    const files = this.resolveFiles(target);
-    const secIssues: AuditIssue[] = [];
+    const files = this.resolveFiles(target).slice(0, 15);
+    let output = `## Code Archaeologist — \`${target}\`\n\n`;
 
-    for (const file of files.slice(0, 5)) {
+    // ── Code age estimation ───────────────────────────────────────────────────
+    const ageReport: Array<{ file: string; era: string; indicators: string[] }> = [];
+    let totalLoc = 0;
+    let totalFunctions = 0;
+    let totalComments = 0;
+    const legacySmells: Array<{ file: string; line: number; smell: string; suggestion: string }> = [];
+
+    const LEGACY_PATTERNS = [
+      { pattern: /\bvar\b/, smell: 'var kullanımı (ES3/ES5)', suggestion: 'const/let kullanın' },
+      { pattern: /\.prototype\./, smell: 'Prototype tabanlı kalıtım', suggestion: 'ES6 class kullanın' },
+      { pattern: /require\s*\(/, smell: 'CommonJS require', suggestion: 'ES module import kullanın' },
+      { pattern: /callback|cb\s*\(/, smell: 'Callback pattern', suggestion: 'async/await kullanın' },
+      { pattern: /new Promise\s*\(\s*function/, smell: 'Promise constructor (eski stil)', suggestion: 'async function kullanın' },
+      { pattern: /arguments\[/, smell: 'arguments objesi', suggestion: 'rest parameters (...args) kullanın' },
+      { pattern: /===\s*null\s*\|\|\s*===\s*undefined/, smell: 'Null/undefined manuel kontrol', suggestion: 'Optional chaining (?.) kullanın' },
+      { pattern: /Object\.assign\s*\(\s*\{/, smell: 'Object.assign ile spread', suggestion: 'Spread operator {...obj} kullanın' },
+      { pattern: /\.then\s*\(.*\.catch\s*\(/, smell: 'Promise chaining (.then/.catch)', suggestion: 'async/await + try/catch kullanın' },
+      { pattern: /\/\*[\s\S]*?TODO|FIXME|HACK|XXX/, smell: 'Block comment içinde TODO/FIXME/HACK', suggestion: 'Kaydedilmemiş teknik borç — task oluşturun' },
+    ];
+
+    for (const file of files) {
       try {
         const content = fs.readFileSync(file, 'utf-8');
-        secIssues.push(...scanSecurity(file, content));
+        const lines = content.split('\n');
+        totalLoc += lines.length;
+        totalFunctions += (content.match(/(?:function|=>|async\s+function)/g) ?? []).length;
+        totalComments += (content.match(/^\s*\/\//gm) ?? []).length;
+
+        // Code age indicators
+        const indicators: string[] = [];
+        const hasVar = /\bvar\b/.test(content);
+        const hasCallback = /\bcallback\b|\bcb\b\s*[,)]/.test(content);
+        const hasRequire = /\brequire\s*\(/.test(content);
+        const hasAsync = /\basync\b/.test(content);
+        const hasOptChain = /\?\.[a-zA-Z]/.test(content);
+        const hasNullish = /\?\?/.test(content);
+
+        if (hasVar) indicators.push('var (ES5)');
+        if (hasCallback) indicators.push('callbacks');
+        if (hasRequire) indicators.push('require()');
+        if (hasAsync) indicators.push('async/await');
+        if (hasOptChain) indicators.push('optional chaining');
+        if (hasNullish) indicators.push('nullish coalescing');
+
+        const era = (hasVar || hasCallback) && !hasAsync ? 'ES5 öncesi / Node.js eski stil'
+          : hasAsync && hasOptChain && hasNullish ? 'Modern (ES2020+)'
+          : hasAsync ? 'ES2017+ (async/await çağı)'
+          : hasRequire ? 'ES6 / CommonJS geçiş dönemi'
+          : 'ES6 (2015-2017)';
+
+        ageReport.push({ file, era, indicators });
+
+        // Legacy smells
+        for (let i = 0; i < lines.length; i++) {
+          if (/^\s*(\/\/|\/\*|\*)/.test(lines[i])) continue;
+          for (const p of LEGACY_PATTERNS) {
+            if (p.pattern.test(lines[i])) {
+              legacySmells.push({ file, line: i + 1, smell: p.smell, suggestion: p.suggestion });
+              break; // one per line
+            }
+          }
+        }
       } catch { /* skip */ }
     }
 
-    let output = `## Code Archaeologist — ${target}\n\n`;
-    output += `### Analiz Özeti\n`;
-    output += `**Taranan dosya:** ${files.length}\n`;
-    output += `**Güvenlik sorunları:** ${secIssues.length}\n\n`;
-    output += `### Arkeolojik Rapor\n`;
-    output += `Bu araç tam git blame + commit history analizi için şu araçları kullanın:\n\n`;
-    output += `1. \`git_blame_context filepath="${target}"\` — Katkıda bulunanlar\n`;
-    output += `2. \`commit_history_search query="${path.basename(target)}"\` — Commit timeline\n`;
-    output += `3. \`complexity_score filepath="${target}"\` — Complexity zamanla nasıl büyümüş\n`;
-    output += `4. \`research_topic topic="${path.basename(target)} module purpose"\` — Semantic analiz\n\n`;
-    output += `### Mevcut Bulgular\n`;
-    if (secIssues.length > 0) {
-      output += `**Birikmiş teknik borç:**\n`;
-      for (const i of secIssues.slice(0, 5)) {
-        output += `- \`${i.filepath}:${i.line}\` — ${i.title}\n`;
+    // ── Summary ───────────────────────────────────────────────────────────────
+    output += `### Codebase Profili\n\n`;
+    output += `| Metrik | Değer |\n|--------|-------|\n`;
+    output += `| Taranan dosya | ${files.length} |\n`;
+    output += `| Toplam satır (LOC) | ${totalLoc} |\n`;
+    output += `| Fonksiyon sayısı | ${totalFunctions} |\n`;
+    output += `| Yorum satırı | ${totalComments} |\n`;
+    output += `| Yorum oranı | %${totalLoc > 0 ? Math.round((totalComments / totalLoc) * 100) : 0} |\n`;
+    output += `| Legacy smell sayısı | ${legacySmells.length} |\n\n`;
+
+    // ── Code age per file ─────────────────────────────────────────────────────
+    output += `### Kod Yaşı Analizi\n\n| Dosya | Dönem | Göstergeler |\n|-------|-------|-------------|\n`;
+    for (const r of ageReport) {
+      output += `| \`${r.file}\` | ${r.era} | ${r.indicators.join(', ') || '—'} |\n`;
+    }
+    output += '\n';
+
+    // ── Legacy smells ─────────────────────────────────────────────────────────
+    if (legacySmells.length > 0) {
+      output += `### Legacy Code Kokuları (${legacySmells.length})\n\n`;
+      const grouped = new Map<string, typeof legacySmells>();
+      for (const s of legacySmells) {
+        if (!grouped.has(s.smell)) grouped.set(s.smell, []);
+        grouped.get(s.smell)!.push(s);
+      }
+      for (const [smell, instances] of grouped) {
+        output += `**${smell}** (${instances.length} yer)\n`;
+        output += `→ ${instances[0].suggestion}\n`;
+        for (const inst of instances.slice(0, 3)) {
+          output += `  - \`${inst.file}:${inst.line}\`\n`;
+        }
+        if (instances.length > 3) output += `  - ... ve ${instances.length - 3} daha\n`;
+        output += '\n';
       }
     } else {
-      output += `✅ Belirgin güvenlik teknik borcu yok.\n`;
+      output += `✅ Belirgin legacy code kokusu bulunamadı.\n\n`;
     }
+
+    // ── Modernization roadmap ────────────────────────────────────────────────
+    output += `### Modernizasyon Yol Haritası\n\n`;
+    if (legacySmells.some(s => s.smell.includes('var'))) output += `1. **var → const/let** migrasyonu: \`eslint --fix --rule 'no-var: error'\`\n`;
+    if (legacySmells.some(s => s.smell.includes('require'))) output += `2. **CommonJS → ES Modules**: package.json'a \`"type": "module"\` ekle, import'ları düzenle\n`;
+    if (legacySmells.some(s => s.smell.includes('callback'))) output += `3. **Callback → async/await** refactor'u: Her callback fonksiyonu için ayrı task oluşturun\n`;
+    if (legacySmells.some(s => s.smell.includes('TODO'))) output += `4. **TODO/FIXME temizliği**: \`find_todos path="${target}"\` ile hepsini listeleyin ve task'lara dönüştürün\n`;
+    output += `\nDetaylı analiz için \`complexity_score filepath="${target}"\` çağrısı yapın.\n`;
+
     return output;
   }
 
   private async runImpactAnalyzer(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
     if (!target) return `## Impact Analyzer\n\nBir sembol, dosya veya dizin belirtin.`;
 
-    const files = this.resolveFiles(target);
-    let output = `## Impact Analyzer — ${target}\n\n`;
-    output += `### Blast Radius Analizi\n\n`;
-    output += `**Hedef:** \`${target}\`\n`;
-    output += `**Doğrudan dosya:** ${files.length}\n\n`;
-    output += `### Etki Değerlendirmesi\nTam analiz için şu araçları kullanın:\n\n`;
-    output += `1. \`find_references symbol="${path.basename(target)}"\` — Tüm kullanımlar\n`;
-    output += `2. \`get_dependencies filepath="${target}"\` — Dependency graph\n`;
-    output += `3. \`search_code query="${path.basename(target)}"\` — Dolaylı referanslar\n\n`;
-    output += `### Risk Kategorileri\n`;
-    output += `| Kategori | Açıklama |\n|----------|----------|\n`;
-    output += `| 🔴 BREAKING | Bu değişimde kesinlikle kırılır |\n`;
-    output += `| 🟠 LIKELY | Muhtemelen etkilenir, review gerek |\n`;
-    output += `| ✅ SAFE | Import ediyor ama direkt kullanmıyor |\n\n`;
-    output += `### Önerilen Değişiklik Sırası\n`;
-    output += `1. Önce leaf dosyaları güncelle (başka dosya import etmeyenler)\n`;
-    output += `2. Sonra middleware/util katmanı\n`;
+    const targetFiles = this.resolveFiles(target);
+    const targetBasenames = new Set(targetFiles.map(f => path.basename(f, path.extname(f))));
+    const targetPaths = new Set(targetFiles.map(f => f.replace(/\\/g, '/')));
+
+    // Scan entire codebase for references
+    const scanRoot = fs.statSync(target).isDirectory() ? target : path.dirname(target);
+    const allFiles = this.resolveFiles(scanRoot === target ? '.' : scanRoot);
+
+    const breaking: Array<{ file: string; line: number; ref: string }> = [];
+    const likely:   Array<{ file: string; line: number; ref: string }> = [];
+    const safe:     Array<{ file: string; line: number; ref: string }> = [];
+
+    for (const file of allFiles) {
+      // Don't scan the target itself
+      const normalFile = file.replace(/\\/g, '/');
+      if (targetPaths.has(normalFile)) continue;
+
+      try {
+        const lines = fs.readFileSync(file, 'utf-8').split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          for (const basename of targetBasenames) {
+            if (!line.includes(basename)) continue;
+
+            const isImport = /^\s*(import|require|from)/.test(line);
+            const isDirectCall = new RegExp(`\\b${basename}\\s*[\\.\\(\\[]`).test(line);
+            const isTypeRef = new RegExp(`:\\s*${basename}|<${basename}>`).test(line);
+
+            if (isImport && isDirectCall) {
+              breaking.push({ file, line: i + 1, ref: line.trim().slice(0, 80) });
+            } else if (isImport || isDirectCall) {
+              likely.push({ file, line: i + 1, ref: line.trim().slice(0, 80) });
+            } else if (isTypeRef) {
+              safe.push({ file, line: i + 1, ref: line.trim().slice(0, 80) });
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    let output = `## Impact Analyzer — \`${target}\`\n\n`;
+    output += `**Hedef dosya:** ${targetFiles.length} | **Taranan:** ${allFiles.length} dosya\n\n`;
+
+    output += `### Blast Radius Özeti\n\n`;
+    output += `| Risk | Dosya Sayısı | Açıklama |\n|------|-------------|----------|\n`;
+    output += `| 🔴 BREAKING | ${new Set(breaking.map(r => r.file)).size} | Import + direkt kullanım — mutlaka güncellenmeli |\n`;
+    output += `| 🟠 LIKELY | ${new Set(likely.map(r => r.file)).size} | Import veya çağrı var — büyük ihtimalle etkilenir |\n`;
+    output += `| ✅ SAFE | ${new Set(safe.map(r => r.file)).size} | Sadece tip referansı — genelde güvenli |\n\n`;
+
+    if (breaking.length > 0) {
+      output += `### 🔴 BREAKING — Mutlaka Güncelle\n\n`;
+      for (const r of breaking.slice(0, 10)) {
+        output += `- **\`${r.file}:${r.line}\`**\n  \`${r.ref}\`\n`;
+      }
+      if (breaking.length > 10) output += `- ... ve ${breaking.length - 10} daha\n`;
+      output += '\n';
+    }
+
+    if (likely.length > 0) {
+      output += `### 🟠 LIKELY — İncele\n\n`;
+      for (const r of likely.slice(0, 8)) {
+        output += `- **\`${r.file}:${r.line}\`** — \`${r.ref}\`\n`;
+      }
+      if (likely.length > 8) output += `- ... ve ${likely.length - 8} daha\n`;
+      output += '\n';
+    }
+
+    const totalImpact = new Set([...breaking, ...likely].map(r => r.file)).size;
+    output += `### Önerilen Değişiklik Sırası\n\n`;
+    output += `Toplam **${totalImpact} dosya** etkilenecek. Şu sırayla güncelleyin:\n\n`;
+    output += `1. Önce leaf dosyaları (sadece import, başka dosyaya export etmeyen)\n`;
+    output += `2. Sonra utility/lib katmanı\n`;
     output += `3. En son entry point ve index dosyaları\n\n`;
-    output += `Bu sırayı belirlemek için \`get_dependencies\` sonucunu incele.`;
+    if (totalImpact > 10) {
+      output += `⚠️ **Yüksek etki** — Bu değişikliği feature branch'te yapın ve tam test suite'i çalıştırın.\n`;
+    } else if (totalImpact === 0) {
+      output += `✅ Hiçbir dosya bu hedefi import etmiyor — düşük blast radius.\n`;
+    }
+
+    return output;
+  }
+
+  private async runTestGenerator(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    if (!target) return `## Test Generator\n\nBir dosya veya dizin belirtin.`;
+
+    const framework = (opts as Record<string, unknown>)['framework'] as string | undefined ?? 'vitest';
+    const files = this.resolveFiles(target).filter(f => /\.(ts|tsx|js|jsx)$/.test(f));
+    if (files.length === 0) return `## Test Generator\n\nHedef konumda test üretmeye uygun dosya bulunamadı.`;
+
+    let output = `## Test Generator — \`${target}\`\n\n`;
+    output += `**Framework:** ${framework} | **Analiz edilen dosya:** ${files.length}\n\n`;
+
+    const importLine = framework === 'jest'
+      ? `import { describe, it, expect, beforeEach, jest } from '@jest/globals';`
+      : framework === 'mocha'
+      ? `import { describe, it } from 'mocha';\nimport { expect } from 'chai';`
+      : `import { describe, it, expect, beforeEach, vi } from 'vitest';`;
+
+    const allExports: Array<{ file: string; type: 'function' | 'class'; name: string; params: string; isAsync: boolean }> = [];
+
+    for (const file of files) {
+      // Skip test files themselves
+      if (/\.(test|spec)\.(ts|tsx|js|jsx)$/.test(file)) continue;
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        // Extract exported functions
+        const fnMatches = [...content.matchAll(/export\s+(async\s+)?function\s+(\w+)\s*\(([^)]*)\)/g)];
+        for (const m of fnMatches) {
+          allExports.push({ file, type: 'function', name: m[2], params: m[3], isAsync: !!m[1] });
+        }
+        // Extract exported arrow functions
+        const arrowMatches = [...content.matchAll(/export\s+const\s+(\w+)\s*=\s*(async\s+)?\(([^)]*)\)/g)];
+        for (const m of arrowMatches) {
+          allExports.push({ file, type: 'function', name: m[1], params: m[3], isAsync: !!m[2] });
+        }
+        // Extract exported classes
+        const classMatches = [...content.matchAll(/export\s+(?:default\s+)?class\s+(\w+)/g)];
+        for (const m of classMatches) {
+          allExports.push({ file, type: 'class', name: m[1], params: '', isAsync: false });
+        }
+      } catch { /* skip */ }
+    }
+
+    if (allExports.length === 0) {
+      return output + 'Export edilen fonksiyon veya sınıf bulunamadı.';
+    }
+
+    output += `### Bulunan ${allExports.length} export\n\n`;
+    output += `| Dosya | Tip | İsim | Async |\n|-------|-----|------|-------|\n`;
+    for (const e of allExports.slice(0, 20)) {
+      output += `| \`${e.file}\` | ${e.type} | \`${e.name}\` | ${e.isAsync ? 'evet' : 'hayır'} |\n`;
+    }
+    output += '\n';
+
+    // Generate test templates for first 5 exports
+    output += `### Üretilen Test Şablonları\n\n`;
+    for (const e of allExports.slice(0, 5)) {
+      const testFile = e.file.replace(/\.(ts|tsx|js|jsx)$/, '.test.$1');
+      output += `#### \`${testFile}\`\n\n\`\`\`typescript\n`;
+      output += `${importLine}\n`;
+      output += `import { ${e.name} } from './${path.basename(e.file, path.extname(e.file))}';\n\n`;
+
+      if (e.type === 'class') {
+        output += `describe('${e.name}', () => {\n`;
+        output += `  let instance: ${e.name};\n\n`;
+        output += `  beforeEach(() => {\n    instance = new ${e.name}();\n  });\n\n`;
+        output += `  it('should be instantiated', () => {\n    expect(instance).toBeDefined();\n  });\n\n`;
+        output += `  it('should handle happy path', () => {\n    // TODO: test main method\n  });\n\n`;
+        output += `  it('should handle edge cases', () => {\n    // TODO: null, empty, boundary\n  });\n`;
+        output += `});\n`;
+      } else {
+        const params = e.params ? e.params.split(',').map(p => p.trim().split(':')[0].trim()).join(', ') : '';
+        const awaitPrefix = e.isAsync ? 'await ' : '';
+        output += `describe('${e.name}', () => {\n`;
+        output += `  it('should return expected result for valid input', ${e.isAsync ? 'async ' : ''}() => {\n`;
+        output += `    // Arrange\n    ${params ? `const [${params}] = [/* test values */];` : ''}\n`;
+        output += `    // Act\n    const result = ${awaitPrefix}${e.name}(${params});\n`;
+        output += `    // Assert\n    expect(result).toBeDefined();\n`;
+        output += `  });\n\n`;
+        output += `  it('should handle null/undefined input gracefully', ${e.isAsync ? 'async ' : ''}() => {\n`;
+        output += `    await expect(${e.isAsync ? 'async () => ' : '() => '}${e.name}(${params ? 'null as unknown as any' : ''})).${e.isAsync ? 'rejects' : 'throws'};\n`;
+        output += `  });\n\n`;
+        output += `  it('should handle boundary values', ${e.isAsync ? 'async ' : ''}() => {\n    // TODO: empty string, 0, max int\n  });\n`;
+        output += `});\n`;
+      }
+      output += `\`\`\`\n\n`;
+    }
+
+    if (allExports.length > 5) {
+      output += `> ${allExports.length - 5} export daha var. Hepsini görmek için belirli dosya ile çalıştırın.\n\n`;
+    }
+
+    output += `### Coverage Hedefi\n`;
+    output += `- ✅ Happy path (geçerli input)\n`;
+    output += `- ✅ Edge cases (null, undefined, boş dizi, sınır değerleri)\n`;
+    output += `- ✅ Error paths (exception, rejection)\n`;
+    output += `\nTest dosyalarını oluşturduktan sonra: \`${framework === 'jest' ? 'jest --coverage' : 'vitest run --coverage'}\`\n`;
+
+    return output;
+  }
+
+  private async runDocGenerator(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    if (!target) return `## Doc Generator\n\nBir dosya veya dizin belirtin.`;
+
+    const style = (opts as Record<string, unknown>)['style'] as string | undefined ?? 'jsdoc';
+    const files = this.resolveFiles(target).filter(f => /\.(ts|tsx|js|jsx)$/.test(f));
+    if (files.length === 0) return `## Doc Generator\n\nHedef konumda kaynak dosya bulunamadı.`;
+
+    let output = `## Doc Generator — \`${target}\`\n\n`;
+    output += `**Stil:** ${style} | **Analiz edilen dosya:** ${files.length}\n\n`;
+
+    const undocumented: Array<{ file: string; line: number; name: string; type: string; params: string; returnType: string }> = [];
+
+    for (const file of files) {
+      try {
+        const content = fs.readFileSync(file, 'utf-8');
+        const lines = content.split('\n');
+
+        // Find exported functions/classes without JSDoc immediately before
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          const fnMatch = line.match(/^export\s+(async\s+)?function\s+(\w+)\s*(<[^>]*>)?\s*\(([^)]*)\)(?:\s*:\s*([^{]+))?/);
+          const arrowMatch = line.match(/^export\s+const\s+(\w+)\s*=\s*(async\s+)?\(([^)]*)\)(?:\s*:\s*([^=>{]+))?/);
+          const classMatch = line.match(/^export\s+(?:default\s+)?(?:abstract\s+)?class\s+(\w+)/);
+
+          let entry: typeof undocumented[0] | null = null;
+          if (fnMatch) {
+            entry = { file, line: i + 1, name: fnMatch[2], type: 'function', params: fnMatch[4], returnType: fnMatch[5]?.trim() ?? 'unknown' };
+          } else if (arrowMatch) {
+            entry = { file, line: i + 1, name: arrowMatch[1], type: 'function', params: arrowMatch[3], returnType: arrowMatch[4]?.trim() ?? 'unknown' };
+          } else if (classMatch) {
+            entry = { file, line: i + 1, name: classMatch[1], type: 'class', params: '', returnType: '' };
+          }
+
+          if (entry) {
+            // Check if preceded by JSDoc comment (/** ... */)
+            const prevBlock = lines.slice(Math.max(0, i - 5), i).join('\n');
+            const hasJsDoc = /\/\*\*[\s\S]*?\*\/\s*$/.test(prevBlock);
+            const hasLineComment = /\/\/\s*\w+/.test(lines[i - 1] ?? '');
+            if (!hasJsDoc && !hasLineComment) {
+              undocumented.push(entry);
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    const coverage = Math.max(0, 100 - Math.round((undocumented.length / Math.max(1, undocumented.length * 1.5)) * 100));
+    output += `### Dokümantasyon Durumu\n\n`;
+    output += `**Belgelenmemiş sembol:** ${undocumented.length}\n\n`;
+
+    if (undocumented.length === 0) {
+      return output + '✅ Tüm export edilen semboller belgelenmiş.\n';
+    }
+
+    output += `### Üretilen JSDoc Şablonları\n\n`;
+    for (const sym of undocumented.slice(0, 8)) {
+      output += `**\`${sym.file}:${sym.line}\`** — ${sym.name}\n\n`;
+      output += `\`\`\`typescript\n`;
+
+      if (sym.type === 'class') {
+        output += `/**\n * ${sym.name} — [Açıklama ekleyin]\n *\n * @example\n * const instance = new ${sym.name}();\n */\n`;
+      } else {
+        const paramDocs = sym.params
+          ? sym.params.split(',').map(p => {
+              const [name, type] = p.trim().split(':').map(s => s.trim());
+              return ` * @param ${name || 'param'} {${type || 'unknown'}} — [Açıklama]\n`;
+            }).join('')
+          : '';
+        output += `/**\n * [Fonksiyon amacını yazın — bir cümlede]\n *\n`;
+        if (paramDocs) output += paramDocs;
+        if (sym.returnType && sym.returnType !== 'void' && sym.returnType !== 'unknown') {
+          output += ` * @returns {${sym.returnType}} — [Ne döndürdüğünü açıklayın]\n`;
+        }
+        output += ` * @throws {Error} — [Hangi koşulda hata fırlatır?]\n`;
+        output += ` * @example\n * const result = ${sym.name}(/* parametreler *\/);\n`;
+        output += ` */\n`;
+      }
+      output += `\`\`\`\n\n`;
+    }
+
+    if (undocumented.length > 8) {
+      output += `> ${undocumented.length - 8} sembol daha belgelenmemiş. Belirli dosya ile tekrar çalıştırın.\n\n`;
+    }
+
+    output += `### Toplu Belgeleme Yöntemi\n`;
+    output += `\`\`\`bash\n# TypeScript: tsdoc + typedoc ile otomatik API docs\nnpx typedoc --entryPoints ${target} --out docs/api\n\`\`\`\n`;
+
+    return output;
+  }
+
+  private async runAccessibilityCheck(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+    if (!target) return `## Accessibility Check\n\nBir bileşen dizini belirtin (örn: src/components/).`;
+
+    const files = this.resolveFiles(target).filter(f => /\.(tsx|jsx|html|htm|svelte|vue)$/.test(f));
+    if (files.length === 0) return `## Accessibility Check\n\nHedef konumda frontend dosyası bulunamadı (.tsx/.jsx/.html).`;
+
+    interface A11yRule { pattern: RegExp; issue: string; fix: string; wcag: string; severity: 'critical' | 'high' | 'medium' | 'low' }
+    const RULES: A11yRule[] = [
+      // Images
+      { pattern: /<img(?![^>]*alt=)[^>]*>/, issue: 'img etiketi alt attribute eksik', fix: 'alt="" (dekoratif) veya alt="açıklama" ekleyin', wcag: '1.1.1 (A)', severity: 'critical' },
+      { pattern: /<img[^>]*alt=\s*["'][^"']+["']/, issue: '', fix: '', wcag: '', severity: 'low' }, // false positive guard — skip
+      // Interactive elements
+      { pattern: /<(?:button|a|input|select|textarea)(?![^>]*(?:aria-label|aria-labelledby|title))[^>]*>/, issue: 'İnteraktif element erişilebilir label eksik', fix: 'aria-label, aria-labelledby veya title ekleyin', wcag: '4.1.2 (A)', severity: 'high' },
+      { pattern: /<a(?![^>]*href)[^>]*>/, issue: '<a> elementi href eksik (button semantiği)', fix: '<button> kullanın veya href ekleyin', wcag: '2.1.1 (A)', severity: 'high' },
+      { pattern: /onClick(?![^/]*(?:onKeyDown|onKeyPress|role=))/, issue: 'onClick var ama onKeyDown eksik (klavye erişimi)', fix: 'onKeyDown/onKeyPress handler ve role="button" ekleyin', wcag: '2.1.1 (A)', severity: 'high' },
+      // Forms
+      { pattern: /<input(?![^>]*(?:id=|aria-label=|aria-labelledby=))[^>]*>/, issue: '<input> için label ilişkilendirmesi eksik', fix: '<label htmlFor="id"> veya aria-label ekleyin', wcag: '1.3.1 (A)', severity: 'critical' },
+      { pattern: /<form(?![^>]*(?:aria-label|aria-labelledby))[^>]*>/, issue: '<form> için aria-label eksik', fix: 'aria-label veya aria-labelledby ekleyin', wcag: '4.1.2 (A)', severity: 'medium' },
+      // ARIA
+      { pattern: /aria-hidden=["']true["'][^>]*(?:onClick|href)/, issue: 'aria-hidden="true" ama interaktif element içeriyor', fix: 'aria-hidden interaktif elementlerde kullanılmaz', wcag: '4.1.2 (A)', severity: 'critical' },
+      { pattern: /tabIndex=["']-1["'](?![^/]*(?:aria-|role=))/, issue: 'tabIndex="-1" ama ARIA attribute eksik', fix: 'tabIndex="-1" kullanıyorsanız aria-hidden veya role ekleyin', wcag: '2.1.1 (A)', severity: 'medium' },
+      { pattern: /role=["'](?:presentation|none)["'][^>]*(?:onClick|aria-label)/, issue: 'role="presentation" ama interaktif content var', fix: 'Semantik element kullanın', wcag: '1.3.1 (A)', severity: 'high' },
+      // Color/focus
+      { pattern: /outline\s*:\s*0|outline\s*:\s*none/, issue: 'CSS outline kaldırılmış (focus indicator silinmiş)', fix: 'focus-visible ile görünür focus indicator sağlayın', wcag: '2.4.7 (AA)', severity: 'high' },
+      { pattern: /color\s*:\s*#[0-9a-f]{3,6}.*background\s*:\s*#[0-9a-f]{3,6}|background\s*:\s*#fff.*color\s*:\s*#[89ab]/i, issue: 'Potansiyel düşük renk kontrastı', fix: 'WCAG AA için min 4.5:1 kontrast oranı sağlayın', wcag: '1.4.3 (AA)', severity: 'medium' },
+      // Language/title
+      { pattern: /<html(?![^>]*lang=)[^>]*>/, issue: '<html> lang attribute eksik', fix: '<html lang="tr"> ekleyin', wcag: '3.1.1 (A)', severity: 'critical' },
+      { pattern: /<(?:video|audio)(?![^>]*(?:controls|aria-label))[^>]*>/, issue: 'Media element controls ve label eksik', fix: 'controls attribute ve aria-label ekleyin', wcag: '1.2.1 (A)', severity: 'high' },
+    ];
+
+    type FindingA11y = { file: string; line: number; issue: string; fix: string; wcag: string; severity: A11yRule['severity'] };
+    const findings: FindingA11y[] = [];
+
+    for (const file of files) {
+      try {
+        const lines = fs.readFileSync(file, 'utf-8').split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i];
+          for (const rule of RULES) {
+            if (!rule.issue) continue; // skip guard rules
+            if (rule.pattern.test(line)) {
+              findings.push({ file, line: i + 1, issue: rule.issue, fix: rule.fix, wcag: rule.wcag, severity: rule.severity });
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    const critical = findings.filter(f => f.severity === 'critical');
+    const high     = findings.filter(f => f.severity === 'high');
+    const medium   = findings.filter(f => f.severity === 'medium');
+
+    let output = `## Accessibility Check (WCAG 2.1)\n\n`;
+    output += `**Taranan dosya:** ${files.length} | **Sorun:** ${findings.length}`;
+    output += ` (🔴 ${critical.length} kritik, 🟠 ${high.length} yüksek, 🟡 ${medium.length} orta)\n\n`;
+
+    if (findings.length === 0) {
+      output += `✅ Pattern tabanlı a11y analizi temiz. Manuel test için:\n`;
+      output += `- [axe DevTools](https://www.deque.com/axe/devtools/) tarayıcı eklentisi\n`;
+      output += `- Yalnızca klavye ile tüm sayfaları test edin (Tab, Enter, Escape)\n`;
+      output += `- Bir ekran okuyucu (NVDA, VoiceOver) ile test edin\n`;
+      return output;
+    }
+
+    output += `### WCAG Uyum Durumu\n\n`;
+    output += `| Seviye | Sorun Sayısı | Durum |\n|--------|-------------|-------|\n`;
+    output += `| Level A (Zorunlu) | ${critical.length + high.length} | ${critical.length + high.length > 0 ? '❌ Başarısız' : '✅ Geçti'} |\n`;
+    output += `| Level AA (Önerilen) | ${medium.length} | ${medium.length > 5 ? '⚠️ İyileştirme gerekli' : '✅ Geçti'} |\n\n`;
+
+    for (const [sev, group, emoji] of [
+      ['critical', critical, '🔴'],
+      ['high', high, '🟠'],
+      ['medium', medium, '🟡'],
+    ] as const) {
+      if (group.length === 0) continue;
+      output += `### ${emoji} ${sev.toUpperCase()} — ${group.length} sorun\n\n`;
+      for (const f of group) {
+        output += `- **\`${f.file}:${f.line}\`** — ${f.issue}\n`;
+        output += `  WCAG: \`${f.wcag}\` | Fix: ${f.fix}\n`;
+      }
+      output += '\n';
+    }
+
+    output += `### Manuel Test Kontrol Listesi\n\n`;
+    output += `- [ ] Tüm sayfaları sadece Tab/Enter/Escape ile dolaşın\n`;
+    output += `- [ ] Zoom %200'de tüm içerik okunabilir mi?\n`;
+    output += `- [ ] Tüm formlar ekran okuyucu ile test edildi mi?\n`;
+    output += `- [ ] Hata mesajları ARIA live region ile duyuruluyor mu?\n`;
+    output += `- [ ] Her sayfa için <title> unique ve anlamlı mı?\n`;
+
+    return output;
+  }
+
+  private async runLicenseScan(target: string | undefined, opts: SkillRunOptions): Promise<string> {
+    const pkgPath = target
+      ? (fs.existsSync(path.join(target, 'package.json')) ? path.join(target, 'package.json') : target)
+      : 'package.json';
+
+    if (!fs.existsSync(pkgPath)) {
+      return '## License Scan\n\npackage.json bulunamadı.';
+    }
+
+    const allowedLicenses = ((opts as Record<string, unknown>)['allowed_licenses'] as string[] | undefined)
+      ?? ['MIT', 'ISC', 'Apache-2.0', 'BSD-2-Clause', 'BSD-3-Clause', '0BSD', 'CC0-1.0', 'Unlicense'];
+    const flagCopyleft = ((opts as Record<string, unknown>)['flag_copyleft'] as boolean | undefined) ?? true;
+
+    const COPYLEFT = ['GPL-2.0', 'GPL-3.0', 'AGPL-3.0', 'LGPL-2.0', 'LGPL-2.1', 'LGPL-3.0', 'EUPL-1.1', 'EUPL-1.2', 'MPL-2.0', 'OSL-3.0'];
+    const RESTRICTIVE = ['CC-BY-SA-4.0', 'CC-BY-NC-4.0', 'SSPL-1.0', 'BUSL-1.1'];
+
+    try {
+      const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8')) as Record<string, unknown>;
+      const deps = { ...(pkg.dependencies as Record<string, string> ?? {}), ...(pkg.devDependencies as Record<string, string> ?? {}) };
+
+      // Try to read licenses from node_modules
+      const nodeModules = path.join(path.dirname(pkgPath), 'node_modules');
+      const licenseMap: Record<string, string> = {};
+
+      for (const dep of Object.keys(deps).slice(0, 100)) {
+        const depPkgPath = path.join(nodeModules, dep, 'package.json');
+        try {
+          if (fs.existsSync(depPkgPath)) {
+            const depPkg = JSON.parse(fs.readFileSync(depPkgPath, 'utf-8')) as Record<string, unknown>;
+            licenseMap[dep] = (typeof depPkg.license === 'string' ? depPkg.license : 'UNKNOWN').toUpperCase().replace(/\s/g, '-');
+          } else {
+            licenseMap[dep] = 'NOT_INSTALLED';
+          }
+        } catch {
+          licenseMap[dep] = 'PARSE_ERROR';
+        }
+      }
+
+      const violations: Array<{ dep: string; license: string; reason: string }> = [];
+      const warnings: Array<{ dep: string; license: string; reason: string }> = [];
+      const approved: string[] = [];
+
+      for (const [dep, license] of Object.entries(licenseMap)) {
+        const normalized = license.replace(/^\(|\)$/g, '').split(/\s+OR\s+/)[0];
+        if (flagCopyleft && COPYLEFT.some(l => normalized.includes(l.replace(/-/g, '')))) {
+          violations.push({ dep, license, reason: 'Copyleft — ticari projede hukuki risk' });
+        } else if (RESTRICTIVE.some(l => normalized.includes(l.replace(/-/g, '')))) {
+          warnings.push({ dep, license, reason: 'Kısıtlayıcı lisans — hukuki inceleme gerekli' });
+        } else if (license === 'UNKNOWN' || license === 'NOT_INSTALLED') {
+          warnings.push({ dep, license, reason: 'Lisans bilgisi bulunamadı' });
+        } else if (allowedLicenses.some(al => normalized.startsWith(al.replace(/-/g, '')))) {
+          approved.push(dep);
+        } else {
+          warnings.push({ dep, license, reason: 'İzin listesinde yok — gözden geçirin' });
+        }
+      }
+
+      let output = `## License Scan\n\n`;
+      output += `**Proje:** ${pkg.name ?? '(unknown)'} | **Taranan:** ${Object.keys(licenseMap).length} paket\n\n`;
+      output += `### Özet\n\n| Kategori | Sayı |\n|----------|------|\n`;
+      output += `| ✅ Onaylı lisans | ${approved.length} |\n`;
+      output += `| ⚠️ Uyarı (gözden geçir) | ${warnings.length} |\n`;
+      output += `| 🔴 İhlal (copyleft/kısıtlayıcı) | ${violations.length} |\n\n`;
+
+      if (violations.length > 0) {
+        output += `### 🔴 Lisans İhlalleri\n\n`;
+        output += `| Paket | Lisans | Sorun |\n|-------|--------|-------|\n`;
+        for (const v of violations) output += `| \`${v.dep}\` | \`${v.license}\` | ${v.reason} |\n`;
+        output += '\n';
+        output += `> ⚠️ **Hukuki önerim:** Copyleft lisanslı paketleri ticari projede kullanmadan önce bir hukuk danışmanıyla görüşün.\n\n`;
+      }
+
+      if (warnings.length > 0) {
+        output += `### ⚠️ Gözden Geçirilmesi Gereken Paketler\n\n`;
+        output += `| Paket | Lisans | Not |\n|-------|--------|-----|\n`;
+        for (const w of warnings.slice(0, 15)) output += `| \`${w.dep}\` | \`${w.license}\` | ${w.reason} |\n`;
+        if (warnings.length > 15) output += `\n... ve ${warnings.length - 15} daha.\n`;
+        output += '\n';
+      }
+
+      output += `### İzin Verilen Lisanslar\n\`${allowedLicenses.join('`, `')}\`\n\n`;
+      output += `### Sonraki Adımlar\n`;
+      output += `1. \`npx license-checker --json > licenses.json\` — Tam lisans raporu\n`;
+      output += `2. \`npx license-checker --failOn "GPL"\` — CI/CD'de copyleft kontrolü\n`;
+      output += violations.length > 0 ? `3. İhlal eden paket${violations.length > 1 ? 'ler' : ''} için alternatif arayın.\n` : '';
+
+      return output;
+    } catch (e) {
+      return `## License Scan\n\nHata: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+
+  private async runRefactorSuggest(target: string | undefined, _opts: SkillRunOptions): Promise<string> {
+    if (!target) return `## Refactor Suggest\n\nBir dosya veya dizin belirtin.`;
+
+    const files = this.resolveFiles(target);
+    let output = `## Refactor Suggest — \`${target}\`\n\n`;
+
+    type Suggestion = { file: string; line: number; category: string; issue: string; before: string; after: string; impact: 'high' | 'medium' | 'low' };
+    const suggestions: Suggestion[] = [];
+
+    const REFACTOR_PATTERNS: Array<{ pattern: RegExp; category: string; issue: string; makeAfter: (match: string) => string; impact: 'high' | 'medium' | 'low' }> = [
+      {
+        pattern: /if\s*\([^)]+\)\s*\{[^}]{0,30}\}\s*else\s*\{[^}]{0,30}\}/,
+        category: 'Simplification',
+        issue: 'if/else → ternary ile basitleştirilebilir',
+        makeAfter: () => 'const result = condition ? valueA : valueB;',
+        impact: 'low',
+      },
+      {
+        pattern: /function\s+\w+\s*\([^)]*\)\s*\{[\s\S]{300,}/,
+        category: 'Long Function',
+        issue: 'Uzun fonksiyon — tek sorumluluk ihlali',
+        makeAfter: () => '// Fonksiyonu 3-5 küçük, isimli yardımcıya böl',
+        impact: 'high',
+      },
+      {
+        pattern: /console\.log|console\.debug|console\.warn/,
+        category: 'Debug Code',
+        issue: 'Production\'da console.log — loglama kütüphanesi kullanın',
+        makeAfter: () => "logger.debug('mesaj', { context });",
+        impact: 'medium',
+      },
+      {
+        pattern: /any\b(?!thing|where|one|time|more|way|how)/,
+        category: 'Type Safety',
+        issue: 'TypeScript any kullanımı — tip güvenliğini zayıflatır',
+        makeAfter: () => '// unknown veya generic <T> kullanın',
+        impact: 'medium',
+      },
+      {
+        pattern: /catch\s*\([^)]*\)\s*\{\s*\}/,
+        category: 'Error Handling',
+        issue: 'Boş catch block — sessiz hata yutma',
+        makeAfter: () => 'catch (e) { logger.error("Context", e); throw e; }',
+        impact: 'high',
+      },
+      {
+        pattern: /\?\.\s*\?\.\s*\?\./,
+        category: 'Over-Chaining',
+        issue: 'Aşırı optional chaining — veri yapısını gözden geçirin',
+        makeAfter: () => '// Ara type guard veya default value kullanın',
+        impact: 'low',
+      },
+      {
+        pattern: /return\s+\{[\s\S]{200,}\}/,
+        category: 'Large Return Object',
+        issue: 'Büyük inline return objesi — interface + constructor kullanın',
+        makeAfter: () => 'interface Result { ... }\nreturn new Result(params);',
+        impact: 'medium',
+      },
+      {
+        pattern: /==\s+null|!=\s+null|==\s+undefined|!=\s+undefined/,
+        category: 'Loose Equality',
+        issue: '== null yerine === null && === undefined veya ?. kullanın',
+        makeAfter: () => 'if (value == null) { ... } // Bu aslında OK ama açık olsun',
+        impact: 'low',
+      },
+      {
+        pattern: /new Array\(|Array\((?!\d)/,
+        category: 'Array Init',
+        issue: 'new Array() yerine [] literal kullanın',
+        makeAfter: () => 'const arr: string[] = [];',
+        impact: 'low',
+      },
+      {
+        pattern: /typeof\s+\w+\s*===\s*['"]undefined['"]|typeof\s+\w+\s*!==\s*['"]undefined['"]/,
+        category: 'Type Check',
+        issue: 'typeof x === "undefined" yerine x === undefined kullanın',
+        makeAfter: () => 'if (x === undefined) { ... }',
+        impact: 'low',
+      },
+    ];
+
+    for (const file of files) {
+      try {
+        const lines = fs.readFileSync(file, 'utf-8').split('\n');
+        for (let i = 0; i < lines.length; i++) {
+          if (/^\s*(\/\/|\/\*|\*)/.test(lines[i])) continue;
+          for (const p of REFACTOR_PATTERNS) {
+            if (p.pattern.test(lines[i])) {
+              suggestions.push({
+                file,
+                line: i + 1,
+                category: p.category,
+                issue: p.issue,
+                before: lines[i].trim().slice(0, 80),
+                after: p.makeAfter(lines[i]),
+                impact: p.impact,
+              });
+              break; // one pattern per line
+            }
+          }
+        }
+      } catch { /* skip */ }
+    }
+
+    const high   = suggestions.filter(s => s.impact === 'high');
+    const medium = suggestions.filter(s => s.impact === 'medium');
+    const low    = suggestions.filter(s => s.impact === 'low');
+
+    output += `**Taranan dosya:** ${files.length} | **Öneri:** ${suggestions.length}`;
+    output += ` (🔴 ${high.length} yüksek etki, 🟡 ${medium.length} orta, ⚪ ${low.length} düşük)\n\n`;
+
+    if (suggestions.length === 0) {
+      return output + '✅ Yaygın refactor fırsatı bulunamadı.\n';
+    }
+
+    // Category summary
+    const catCount = new Map<string, number>();
+    for (const s of suggestions) catCount.set(s.category, (catCount.get(s.category) ?? 0) + 1);
+    output += `### Kategori Özeti\n\n| Kategori | Adet |\n|----------|------|\n`;
+    for (const [cat, cnt] of [...catCount.entries()].sort((a, b) => b[1] - a[1])) {
+      output += `| ${cat} | ${cnt} |\n`;
+    }
+    output += '\n';
+
+    for (const [impact, group, emoji, label] of [
+      ['high', high, '🔴', 'Yüksek Etki — Önce Bunları Yap'],
+      ['medium', medium, '🟡', 'Orta Etki'],
+      ['low', low, '⚪', 'Düşük Etki / Stil'],
+    ] as const) {
+      if (group.length === 0) continue;
+      output += `### ${emoji} ${label} (${group.length})\n\n`;
+      for (const s of group.slice(0, 6)) {
+        output += `**\`${s.file}:${s.line}\`** — ${s.issue}\n`;
+        output += `- Before: \`${s.before}\`\n`;
+        output += `- After:  \`${s.after}\`\n\n`;
+      }
+      if (group.length > 6) output += `... ve ${group.length - 6} daha.\n\n`;
+    }
+
+    return output;
+  }
+
+  private async runFeaturePlanner(opts: SkillRunOptions): Promise<string> {
+    const goal = (opts as Record<string, unknown>)['goal'] as string | undefined
+      ?? (opts as Record<string, unknown>)['description'] as string | undefined
+      ?? 'Özellik tanımlanmadı';
+
+    let output = `## Feature Planner\n\n`;
+    output += `**Hedef:** ${goal}\n\n`;
+    output += `### Önerilen Uygulama Sırası\n\n`;
+    output += `Bu özelliği Kiro-style spec workflow ile uygulayın:\n\n`;
+    output += `\`\`\`\n`;
+    output += `1. spec_init name="${goal.slice(0, 30)}" description="${goal}"\n`;
+    output += `2. spec_generate specId="<id>" phase="requirements"\n`;
+    output += `3. spec_generate specId="<id>" phase="design"\n`;
+    output += `4. spec_generate specId="<id>" phase="tasks"\n`;
+    output += `5. task_next  ← ilk göreve başla\n`;
+    output += `\`\`\`\n\n`;
+    output += `### Özellik Uygulama Kontrol Listesi\n\n`;
+    output += `- [ ] Requirements yazıldı ve onaylandı\n`;
+    output += `- [ ] Teknik tasarım gözden geçirildi\n`;
+    output += `- [ ] Görevler oluşturuldu ve önceliklendirildi\n`;
+    output += `- [ ] Mevcut kod impact analizi yapıldı (\`impact-analyzer\`)\n`;
+    output += `- [ ] Test senaryoları tanımlandı (\`test-generator\`)\n`;
+    output += `- [ ] Güvenlik açısından gözden geçirildi (\`security-audit\`)\n`;
+    output += `- [ ] Kod commit'ten önce denetlendi (\`audit_diff\`)\n`;
+
     return output;
   }
 
