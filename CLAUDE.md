@@ -69,6 +69,12 @@ Run the **entire sequence** for each intent. Do not stop between steps.
 | "what will break?" / "blast radius?" / "safe to rename?" / "before I refactor" | `run_skill(impact-analyzer)` |
 | "continue where" / "resume" / "where were we" / "context reset" | `run_skill(session-restore)` → `task_next` |
 | "there's a bug" / "it's broken" | `run_skill(bug-reporter)` → `task_create(category="bug")` |
+| "agent memory" / "persist context" / "cross-session" / "long-term memory" | `run_skill(memory-systems)` |
+| "multi-agent" / "supervisor pattern" / "agent orchestration" / "parallel agents" | `run_skill(multi-agent-patterns)` |
+| "context full" / "token limit" / "optimize context" / "reduce tokens" | `run_skill(context-optimization)` → `run_skill(context-compression)` |
+| "compress session" / "summarize context" / "context too long" / "start fresh" | `run_skill(context-compression)` |
+| "losing context" / "forgetting" / "inconsistent answers" / "context health" | `run_skill(context-degradation)` |
+| "DSP" / "entity graph" / "structure mapping" / "bootstrap project structure" | `run_skill(data-structure-protocol)` |
 
 ---
 
@@ -142,6 +148,12 @@ Run the **entire sequence** for each intent. Do not stop between steps.
 | `auto-fixer` | "fix all issues", "auto fix", "clean up", "fix everything" |
 | `code-archaeologist` | "why does this exist", "history of", "who wrote", "legacy code" |
 | `impact-analyzer` | "what will break", "safe to rename", "blast radius", "before I refactor" |
+| `memory-systems` | "agent memory", "persist context", "cross-session", "long-term memory", "hafıza sistemi" |
+| `multi-agent-patterns` | "multi-agent", "supervisor pattern", "agent orchestration", "parallel agents", "swarm" |
+| `context-optimization` | "context full", "token limit", "optimize context", "reduce tokens", "bağlam doldu" |
+| `context-compression` | "compress session", "summarize context", "context too long", "start fresh" |
+| `context-degradation` | "losing context", "forgetting", "inconsistent answers", "context health", "degradation" |
+| `data-structure-protocol` | "DSP", "entity graph", "structure mapping", "dependency graph", "bootstrap project" |
 
 ---
 
