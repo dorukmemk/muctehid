@@ -89,9 +89,11 @@ Run the **entire sequence** for each intent. Do not stop between steps.
 - Do NOT accumulate more than 2 research ops without persisting findings.
 
 ### Before finishing the session
-1. Run `audit_diff` if any files were changed during the session.
+1. Run `audit_diff` if any files were changed during the session — review only, do NOT commit or push automatically.
 2. Update `.plan/progress.md` with what was accomplished.
 3. Verify all pending tasks in `task_next` are addressed or tracked.
+
+> **Commit/push require explicit user request.** Never stage, commit, or push changes unless the user says "commit", "push", or "make a PR".
 
 ---
 
@@ -105,6 +107,7 @@ Run the **entire sequence** for each intent. Do not stop between steps.
 ❌ Start a complex task without deep-planner
 ❌ Refactor or rename without impact-analyzer
 ❌ Commit without audit_diff
+❌ Auto-commit or auto-push without explicit user request ("commit this", "push", "make a PR")
 ❌ Ask "should I run health_score?" after index_codebase — just run it
 ```
 
