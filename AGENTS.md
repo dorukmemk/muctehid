@@ -63,6 +63,10 @@ task_next         ← see what needs to be done
 | "refactor this" | `run_skill skill="refactor-planner"` |
 | "deep analysis" | `run_skill skill="deep-dive"` |
 | "full audit" | `run_skill skill="audit-runner"` |
+| **"what will break if I change X?"** | **`impact target="X" direction="upstream"`** |
+| **"show me the call graph"** | **`context name="X"` → 360° view** |
+| **"safe to rename X?"** | **`rename symbol_name="X" new_name="Y" dry_run=true`** |
+| **"what changed in this commit?"** | **`detect_changes scope="staged"`** |
 
 ## Hook Behavior (auto-enforced)
 
@@ -88,6 +92,40 @@ task_next         ← see what needs to be done
 | `code-archaeologist` | "why does this exist", "history of", "who wrote", "legacy code" |
 | `impact-analyzer` | "what will break", "safe to rename", "blast radius", "before I refactor" |
 
+## 🆕 GitNexus Integration (Knowledge Graph)
+
+### New Graph-Based Tools
+
+| Tool | When to Use | Example |
+|------|-------------|---------|
+| `impact` | Before refactoring, to see blast radius | `impact({ target: "validateUser", direction: "upstream" })` |
+| `context` | To understand a symbol's relationships | `context({ name: "validateUser", filepath: "src/auth/validate.ts" })` |
+| `detect_changes` | Pre-commit impact analysis | `detect_changes({ scope: "staged" })` |
+| `rename` | Multi-file safe rename | `rename({ symbol_name: "validateUser", new_name: "verifyUser", dry_run: true })` |
+| `cypher` | Raw graph queries for complex analysis | `cypher({ query: "MATCH (fn)-[:CALLS]->(target) RETURN fn" })` |
+| `list_processes` | See execution flows | `list_processes({ minSteps: 3 })` |
+| `list_clusters` | See functional modules | `list_clusters({ minCohesion: 0.7 })` |
+
+### When to Use Graph Tools
+
+- **Before refactoring** → `impact` to see what will break
+- **Before renaming** → `rename` with `dry_run: true` to preview changes
+- **Understanding code flow** → `list_processes` to see execution paths
+- **Finding related code** → `list_clusters` to see functional groupings
+- **Pre-commit check** → `detect_changes` to see impact of your changes
+- **Deep symbol analysis** → `context` for 360° view of a function/class
+
+### Graph Tool Workflow
+
+```
+1. User: "I want to refactor validateUser"
+2. Agent: impact({ target: "validateUser", direction: "upstream" })
+3. → Shows: 3 direct callers, 2 processes affected, RISK: MEDIUM
+4. Agent: context({ name: "validateUser" })
+5. → Shows: incoming calls, outgoing calls, processes, cluster
+6. Agent: "Safe to refactor, but test LoginFlow and RegistrationFlow"
+```
+
 ## Never Do Without muctehid
 
 - Do NOT read files with cat/grep to understand the codebase — use `search_code`
@@ -95,4 +133,6 @@ task_next         ← see what needs to be done
 - Do NOT skip `audit_diff` before commits
 - Do NOT start a feature without `spec_init`
 - Do NOT start a complex task without `deep-planner`
-- Do NOT refactor/rename without `impact-analyzer` first
+- Do NOT refactor/rename without `impact` first (graph-based analysis)
+- Do NOT commit without `detect_changes` (impact analysis)
+- Do NOT rename symbols manually — use `rename` tool (multi-file safe)

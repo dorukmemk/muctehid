@@ -9,6 +9,7 @@
 ## Özellikler
 
 - 🔍 **Hybrid Memory** — BM25 (SQLite FTS5) + vector search, RRF fusion ile birleştirilmiş
+- 🕸️ **Knowledge Graph** — GitNexus-inspired AST-based code graph, impact analysis, blast radius
 - 🔒 **OWASP Top 10** — 15 pattern, fix önerileriyle birlikte
 - 🕵️ **Secret Detection** — AWS, GitHub, Stripe, JWT, SSH key tespiti (regex + entropy)
 - 📊 **Health Score** — 0-100 ağırlıklı skor (security, quality, docs, tests, deps)
@@ -210,30 +211,47 @@ claude mcp add muctehid node .mcp/muctehid/dist/index.js \
 ## Hızlı Başlangıç
 
 ```
-# 1. Repoyu indexle
-index_codebase
+# 1. Repoyu indexle + knowledge graph oluştur
+index_codebase buildGraph=true
 
-# 2. Güvenlik taraması
+# 2. Impact analysis (GitNexus-inspired)
+impact target="validateUser" direction="upstream"
+# → Shows: 3 direct callers, RISK: MEDIUM
+
+# 3. 360° context
+graph_context name="validateUser"
+# → Shows: incoming calls, outgoing calls, cluster
+
+# 4. Güvenlik taraması
 run_skill("security-audit", { path: "src/" })
 
-# 3. Yeni özellik planla (Spec Mode)
+# 5. Yeni özellik planla (Spec Mode)
 spec_init name="user-auth" description="JWT tabanlı kimlik doğrulama sistemi"
 spec_generate specId="SPEC-001_user-auth" phase="requirements"
 spec_generate specId="SPEC-001_user-auth" phase="design"
 spec_generate specId="SPEC-001_user-auth" phase="tasks"
 
-# 4. Görev yönetimi
+# 6. Görev yönetimi
 task_list
 task_next
 task_progress
 
-# 5. Araştırma
+# 7. Araştırma
 research_topic topic="authentication best practices"
 ```
 
 ---
 
-## Tools (52 — v2.0.0)
+## Tools (57 — v2.0.0)
+
+### 🆕 Graph / GitNexus (5)
+| Tool | Açıklama |
+|------|----------|
+| `graph_build` | Knowledge graph oluştur (Tree-sitter AST parsing) |
+| `impact` | Blast radius analizi — "bu fonksiyonu değiştirirsem ne kırılır?" |
+| `graph_context` | 360° sembol görünümü (incoming/outgoing/cluster) |
+| `graph_stats` | Graf istatistikleri |
+| `graph_query` | Raw SQL sorguları |
 
 ### Orchestrator (3)
 | Tool | Açıklama |
@@ -279,7 +297,7 @@ research_topic topic="authentication best practices"
 ### Memory (6)
 | Tool | Açıklama |
 |------|----------|
-| `index_codebase` | Dizini hybrid BM25+vector memory'ye indexle |
+| `index_codebase` | Dizini hybrid BM25+vector memory'ye indexle (buildGraph=true ile knowledge graph da oluştur) |
 | `search_code` | Semantic + keyword arama |
 | `add_memory` | Manuel not/context ekle |
 | `get_context` | Dosya için indexli context getir |
@@ -411,6 +429,48 @@ Repo root'una `.audit-config.json` ekle:
 | Embeddings | `@xenova/transformers` | ONNX, local, API key yok |
 | Config | `zod` | schema validation |
 | Git | `simple-git` | cross-platform |
+| **Graph** | **`better-sqlite3`** | **SQLite-based knowledge graph** |
+| **AST Parser** | **`tree-sitter`** | **TypeScript/JavaScript parsing** |
+
+---
+
+## 🆕 GitNexus Integration
+
+müctehid artık GitNexus'un yaptığını yapabiliyor! Kod tabanını **knowledge graph** olarak görüyor ve yapısal ilişkileri anlıyor.
+
+### Özellikler
+
+- **Impact Analysis** — "Bu fonksiyonu değiştirirsem ne kırılır?"
+- **360° Context** — Bir sembol için tüm incoming/outgoing ilişkileri
+- **Blast Radius** — Risk scoring (LOW, MEDIUM, HIGH, CRITICAL)
+- **AST-based** — Tree-sitter ile TypeScript/JavaScript parsing
+- **SQLite-backed** — Sıfır external dependency
+
+### Kullanım
+
+```typescript
+// 1. Build graph
+index_codebase({ path: "src/", buildGraph: true })
+
+// 2. Impact analysis
+impact({ target: "validateUser", direction: "upstream" })
+// Output:
+// TARGET: Function validateUser (src/auth/validate.ts:15)
+// UPSTREAM (what depends on this):
+//   Depth 1 (WILL BREAK):
+//     ✗ handleLogin [CALLS 90%] → src/api/auth.ts:12
+//     ✗ handleRegister [CALLS 85%] → src/api/auth.ts:78
+//   RISK: MEDIUM — 2 direct callers
+
+// 3. 360° context
+graph_context({ name: "validateUser" })
+// Output:
+// INCOMING (3): handleLogin, handleRegister, UserController
+// OUTGOING (2): checkPassword, createSession
+// CLUSTER: Authentication (cohesion: 87%)
+```
+
+Detaylı dokümantasyon: `GITNEXUS_INTEGRATION.md`
 
 ---
 

@@ -1,0 +1,68 @@
+feat: GitNexus integration - Knowledge graph & impact analysis
+
+🎉 Major Feature: GitNexus-inspired knowledge graph implementation
+
+## New Features
+
+### Knowledge Graph (5 new tools)
+- `graph_build` - Build AST-based knowledge graph from codebase
+- `impact` - Blast radius analysis (upstream/downstream)
+- `graph_context` - 360° symbol view (incoming/outgoing/cluster)
+- `graph_stats` - Graph statistics
+- `graph_query` - Raw SQL queries
+
+### Enhanced Tools
+- `index_codebase` - Added `buildGraph: boolean` parameter
+
+## Implementation
+
+### Core Components
+- `src/lib/graph/graph-store.ts` - SQLite-based graph database
+- `src/lib/graph/graph-builder.ts` - AST → Graph converter
+- `src/lib/graph/impact-analyzer.ts` - Blast radius analysis
+- `src/lib/graph/parsers/typescript-parser.ts` - Tree-sitter TS/JS parser
+- `src/tools/graph.ts` - MCP tool handlers
+
+### Tech Stack
+- SQLite (better-sqlite3) - Graph storage
+- Tree-sitter - AST parsing (TypeScript/JavaScript)
+- BFS traversal - Upstream/downstream analysis
+- Risk scoring - Depth + caller count based
+
+## Documentation
+- `GITNEXUS_INTEGRATION.md` - User documentation
+- `IMPLEMENTATION_SUMMARY.md` - Implementation summary
+- `.plan/gitnexus-integration-spec.md` - Technical spec
+- `.plan/task_plan.md` - Task breakdown
+- `.plan/progress.md` - Progress report
+- `AGENTS.md` - Updated with GitNexus section
+- `README.md` - Updated with new features
+
+## Use Cases
+
+```typescript
+// Build graph
+index_codebase({ path: "src/", buildGraph: true })
+
+// Impact analysis
+impact({ target: "validateUser", direction: "upstream" })
+// → Shows: 3 direct callers, RISK: MEDIUM
+
+// 360° context
+graph_context({ name: "validateUser" })
+// → Shows: incoming, outgoing, cluster
+```
+
+## Benefits
+- LLMs can now see code structure as a graph
+- "What will break if I change X?" is now answerable
+- Safer refactoring with blast radius analysis
+- Better context understanding for AI agents
+
+## Status
+- Phase 1: ✅ COMPLETE (Graph infrastructure + Impact analysis)
+- MVP: ✅ READY
+- Build: ✅ SUCCESS
+- Next: Phase 2 (Process detection) & Phase 3 (Advanced tools)
+
+Closes #GitNexus-Integration

@@ -13,6 +13,7 @@ import { SkillRegistry } from './lib/skills/registry.js';
 import { SkillsManager } from './tools/skills.js';
 import { GitTools } from './tools/git.js';
 import { ReportTools } from './tools/report.js';
+import { GraphTools } from './tools/graph.js';
 import { auditFile } from './tools/audit.js';
 import { getHealthScore } from './tools/health.js';
 import { scanSecrets } from './lib/audit/secrets.js';
@@ -83,6 +84,7 @@ const skillRegistry = new SkillRegistry([BUILTIN_SKILLS_DIR, INSTALLED_SKILLS_DI
 const skillsManager = new SkillsManager(skillRegistry, INSTALLED_SKILLS_DIR);
 const gitTools = new GitTools(REPO_ROOT);
 const reportTools = new ReportTools(REPORTS_DIR, REPO_ROOT);
+const graphTools = new GraphTools(AUDIT_DATA_DIR);
 const pluginRegistry = new PluginRegistry();
 const taskStore = new TaskStore(AUDIT_DATA_DIR);
 const sessionStore = new SessionStore(AUDIT_DATA_DIR);
@@ -139,7 +141,7 @@ const server = new Server(
 // ─── Tool Definitions ─────────────────────────────────────────────────────────
 const TOOLS = [
   // ── Memory (6) ────────────────────────────────────────────────────────────
-  { name: 'index_codebase', description: 'ALWAYS call this at the start of every session and after major file changes. Indexes the entire codebase into hybrid BM25+vector memory so all other tools have context. Respects .gitignore rules automatically.', inputSchema: { type: 'object', properties: { path: { type: 'string' }, mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] } } } },
+  { name: 'index_codebase', description: 'ALWAYS call this at the start of every session and after major file changes. Indexes the entire codebase into hybrid BM25+vector memory so all other tools have context. Respects .gitignore rules automatically. Set buildGraph=true to also build knowledge graph for impact analysis.', inputSchema: { type: 'object', properties: { path: { type: 'string' }, mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] }, buildGraph: { type: 'boolean', description: 'Build knowledge graph for impact analysis (default: false)' } } } },
   { name: 'search_code', description: 'Use BEFORE reading any file to find relevant code. Use when the user asks "where is X", "find the code that does Y", "how does Z work", or before editing to understand existing patterns.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, k: { type: 'number' }, mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] }, language: { type: 'string' } } } },
   { name: 'add_memory', description: 'Use when the user mentions an important decision, architectural note, or context that should persist across sessions.', inputSchema: { type: 'object', required: ['content'], properties: { content: { type: 'string' }, filepath: { type: 'string' }, startLine: { type: 'number' }, endLine: { type: 'number' }, language: { type: 'string' } } } },
   { name: 'get_context', description: 'Use when about to edit a specific file — retrieves all indexed chunks for that file to understand its full structure before making changes.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
@@ -204,6 +206,13 @@ const TOOLS = [
   { name: 'template_list', description: 'Use when user asks for report templates, document templates, or to see available document formats.', inputSchema: { type: 'object', properties: {} } },
   { name: 'template_render', description: 'Use to generate structured documents (bug reports, audit reports, spec documents) from templates.', inputSchema: { type: 'object', required: ['templateName', 'variables'], properties: { templateName: { type: 'string' }, variables: { type: 'object' } } } },
   { name: 'template_save', description: 'Use when user wants to save a reusable document template for future use.', inputSchema: { type: 'object', required: ['name', 'content'], properties: { name: { type: 'string' }, content: { type: 'string' }, description: { type: 'string' } } } },
+
+  // ── Graph / GitNexus (5) ──────────────────────────────────────────────────
+  { name: 'graph_build', description: 'Build knowledge graph from codebase using Tree-sitter AST parsing. Call this ONCE after index_codebase to enable impact analysis, context queries, and graph-based tools. Required before using impact, graph_context, or graph_query.', inputSchema: { type: 'object', properties: { path: { type: 'string', description: 'Directory to build graph from (default: repo root)' }, extensions: { type: 'array', items: { type: 'string' }, description: 'File extensions to parse (default: [.ts, .tsx, .js, .jsx])' } } } },
+  { name: 'impact', description: 'CRITICAL: Use BEFORE any refactoring or renaming to see blast radius. Shows what will break if you change a symbol. Direction: upstream = what depends on this (callers), downstream = what this depends on (callees). Use when user asks "what will break", "safe to change", "blast radius", "who calls this".', inputSchema: { type: 'object', required: ['target'], properties: { target: { type: 'string', description: 'Symbol name to analyze (e.g., "validateUser", "AuthService")' }, direction: { type: 'string', enum: ['upstream', 'downstream'], description: 'upstream = callers (default), downstream = callees' }, maxDepth: { type: 'number', description: 'Max traversal depth (default: 3)' }, minConfidence: { type: 'number', description: 'Min confidence score 0-1 (default: 0.0)' } } } },
+  { name: 'graph_context', description: 'Get 360° view of a symbol: all incoming calls, outgoing calls, cluster membership. Use when user asks "show me the call graph", "what does X call", "who calls X", "explain this function". More detailed than get_context.', inputSchema: { type: 'object', required: ['name'], properties: { name: { type: 'string', description: 'Symbol name (e.g., "validateUser")' }, filepath: { type: 'string', description: 'Optional: filter by filepath if multiple symbols with same name' } } } },
+  { name: 'graph_stats', description: 'Show graph statistics: number of symbols, relations, communities. Use to verify graph is built.', inputSchema: { type: 'object', properties: {} } },
+  { name: 'graph_query', description: 'Execute raw Cypher query on knowledge graph. For advanced users. Use when standard tools are not enough.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string', description: 'Cypher query (e.g., "MATCH (fn:Function)-[:CALLS]->(target) RETURN fn")' } } } },
 ];
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }));
@@ -221,8 +230,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case 'index_codebase': {
           const targetPath = (args.path as string) ?? REPO_ROOT;
           const mode = (args.mode as 'bm25' | 'vector' | 'hybrid') ?? 'hybrid';
+          const buildGraph = (args.buildGraph as boolean) ?? false;
+          
           const result = await mem.indexDirectory(targetPath, { mode, exclude: config.memory.exclude });
           text = `✅ Indexing complete!\n- New: ${result.indexed} files\n- Updated: ${result.updated} files\n- Skipped (unchanged): ${result.skipped} files\n- Errors: ${result.errors}`;
+          
+          // Build knowledge graph if requested
+          if (buildGraph) {
+            text += `\n\n🔄 Building knowledge graph...`;
+            try {
+              const graphResult = await graphTools.handleTool('graph_build', { path: targetPath });
+              text += `\n${graphResult}`;
+            } catch (error) {
+              text += `\n⚠️ Graph build failed: ${error instanceof Error ? error.message : String(error)}`;
+            }
+          } else {
+            text += `\n\n💡 Tip: Add \`buildGraph: true\` to enable impact analysis and graph-based tools.`;
+          }
           break;
         }
         case 'search_code': {
@@ -958,6 +982,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       fs.writeFileSync(filepath, final, 'utf-8');
       templateRegistry.reload();
       text = `✅ Şablon kaydedildi: ${filepath}`;
+    }
+
+    // ── Graph tools ───────────────────────────────────────────────────────────
+    else if (['graph_build', 'impact', 'graph_context', 'graph_stats', 'graph_query'].includes(name)) {
+      text = await graphTools.handleTool(name, args);
     }
 
     else {
