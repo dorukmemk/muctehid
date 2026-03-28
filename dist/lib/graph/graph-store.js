@@ -115,35 +115,35 @@ class GraphStore {
         const fromExists = this.db.prepare('SELECT 1 FROM symbols WHERE uid = ?').get(from);
         const toExists = this.db.prepare('SELECT 1 FROM symbols WHERE uid = ?').get(to);
         if (!fromExists || !toExists) {
-            // Skip if either symbol doesn't exist (cross-file reference not yet indexed)
-            return;
+            return false;
         }
         // Check for duplicate
-        const existing = this.db.prepare(`
-      SELECT 1 FROM relations 
-      WHERE fromUid = ? AND toUid = ? AND type = ?
-    `).get(from, to, type);
+        const existing = this.db.prepare('SELECT 1 FROM relations WHERE fromUid = ? AND toUid = ? AND type = ?').get(from, to, type);
         if (existing) {
             // Update confidence if higher
-            this.db.prepare(`
-        UPDATE relations 
-        SET confidence = MAX(confidence, ?)
-        WHERE fromUid = ? AND toUid = ? AND type = ?
-      `).run(confidence, from, to, type);
-            return;
+            this.db.prepare('UPDATE relations SET confidence = MAX(confidence, ?) WHERE fromUid = ? AND toUid = ? AND type = ?').run(confidence, from, to, type);
+            return false; // not a new relation
         }
-        // Insert new relation
-        const stmt = this.db.prepare(`
-      INSERT INTO relations (fromUid, toUid, type, confidence)
-      VALUES (?, ?, ?, ?)
-    `);
         try {
-            stmt.run(from, to, type, confidence);
+            this.db.prepare('INSERT INTO relations (fromUid, toUid, type, confidence) VALUES (?, ?, ?, ?)').run(from, to, type, confidence);
+            return true;
         }
         catch (error) {
-            // Log error for debugging
             console.warn(`[GraphStore] Failed to create relation ${from} -> ${to}:`, error);
+            return false;
         }
+    }
+    async getAllSymbols() {
+        const rows = this.db.prepare('SELECT * FROM symbols').all();
+        return rows.map((row) => ({
+            uid: row.uid,
+            name: row.name,
+            kind: row.kind,
+            filepath: row.filepath,
+            startLine: row.startLine,
+            endLine: row.endLine,
+            complexity: row.complexity,
+        }));
     }
     async createCommunity(data) {
         const stmt = this.db.prepare(`
