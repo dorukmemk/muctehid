@@ -68,6 +68,73 @@ task_next         ← see what needs to be done
 | **"safe to rename X?"** | **`rename symbol_name="X" new_name="Y" dry_run=true`** |
 | **"what changed in this commit?"** | **`detect_changes scope="staged"`** |
 
+## 🆕 Enhanced Memory System (3-Layer)
+
+### Timeline Memory (Episodic)
+Tracks every action with timestamps. Use to learn from history.
+
+| Tool | When to Use |
+|------|-------------|
+| `timeline_add` | **AUTO**: After every significant action (refactor, fix, feature) |
+| `timeline_search` | "How did we handle X before?", "What validation changes did we make?" |
+| `timeline_recent` | Session start to see recent work |
+
+### File Notes (Semantic)
+Annotations about specific files. Use to remember warnings, learnings, TODOs.
+
+| Tool | When to Use |
+|------|-------------|
+| `file_note_add` | After complex refactor, bug fix, or learning something important |
+| `file_note_get` | **AUTO**: When opening a file to see warnings/notes |
+| `file_note_search` | "Where did we use regex validation?", "Find all TODO notes" |
+
+**Categories**: `info`, `warning`, `todo`, `learned`
+
+### Important Facts (Declarative)
+Critical knowledge about the project. Use for architecture, security, business rules.
+
+| Tool | When to Use |
+|------|-------------|
+| `fact_add` | When learning critical project knowledge |
+| `fact_search` | Before making decisions, "What's our auth strategy?" |
+| `fact_list` | **AUTO**: Session start to load top facts |
+
+**Categories**: `architecture`, `security`, `business`, `technical`  
+**Importance**: `low`, `medium`, `high`, `critical`
+
+### Memory Usage Examples
+
+```typescript
+// After refactoring
+timeline_add({
+  action: "refactored UserService.validateUser",
+  context: "Changed to Zod schema validation",
+  files: ["src/services/user.ts"],
+  outcome: "success",
+  tags: ["refactor", "validation"]
+})
+
+// Add file warning
+file_note_add({
+  filepath: "src/services/user.ts",
+  note: "validateUser uses Zod schema. Don't change without updating tests.",
+  category: "warning"
+})
+
+// Add critical fact
+fact_add({
+  fact: "API uses JWT tokens with 24h expiration",
+  category: "security",
+  importance: "high"
+})
+
+// Search past work
+timeline_search({
+  query: "validation logic",
+  timeRange: "last 30 days"
+})
+```
+
 ## Hook Behavior (auto-enforced)
 
 ### PreToolUse — Before every file edit

@@ -31,6 +31,7 @@ import { SessionStore } from './lib/orchestrator/session-store.js';
 import { Conductor } from './lib/orchestrator/conductor.js';
 import { handleOrchestratorTool, ORCHESTRATOR_TOOL_NAMES, ORCHESTRATOR_TOOL_DEFS } from './tools/orchestrator.js';
 import { buildReport, saveReport } from './lib/reporter/deep-reporter.js';
+import { memoryTools } from './tools/memory-tools.js';
 
 // ─── Collect files (single file or recursive dir walk) ────────────────────────
 function collectFiles(target: string, extensions: string[]): string[] {
@@ -145,8 +146,20 @@ const TOOLS = [
   { name: 'search_code', description: 'Use BEFORE reading any file to find relevant code. Use when the user asks "where is X", "find the code that does Y", "how does Z work", or before editing to understand existing patterns.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, k: { type: 'number' }, mode: { type: 'string', enum: ['bm25', 'vector', 'hybrid'] }, language: { type: 'string' } } } },
   { name: 'add_memory', description: 'Use when the user mentions an important decision, architectural note, or context that should persist across sessions.', inputSchema: { type: 'object', required: ['content'], properties: { content: { type: 'string' }, filepath: { type: 'string' }, startLine: { type: 'number' }, endLine: { type: 'number' }, language: { type: 'string' } } } },
   { name: 'get_context', description: 'Use when about to edit a specific file — retrieves all indexed chunks for that file to understand its full structure before making changes.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
-  { name: 'memory_stats', description: 'Use to check if codebase has been indexed yet (chunks: 0 means not indexed).', inputSchema: { type: 'object', properties: {} } },
+  { name: 'memory_stats', description: 'Use to check if codebase has been indexed yet (chunks: 0 means not indexed). Also shows timeline, file notes, and facts statistics.', inputSchema: { type: 'object', properties: {} } },
   { name: 'clear_memory', description: 'Use when the codebase has changed significantly and a full re-index is needed.', inputSchema: { type: 'object', properties: {} } },
+  
+  // ── Enhanced Memory (10) ──────────────────────────────────────────────────
+  { name: 'timeline_add', description: 'Add event to timeline memory. Use AUTOMATICALLY after every significant action to build episodic memory. Tracks what was done, when, and outcome.', inputSchema: { type: 'object', required: ['action', 'outcome'], properties: { action: { type: 'string' }, context: { type: 'string' }, files: { type: 'array', items: { type: 'string' } }, outcome: { type: 'string', enum: ['success', 'failure', 'partial'] }, tags: { type: 'array', items: { type: 'string' } } } } },
+  { name: 'timeline_search', description: 'Search timeline for past events. Use when user asks "what did we do before", "how did we handle X", or to learn from history.', inputSchema: { type: 'object', properties: { query: { type: 'string' }, timeRange: { type: 'string', enum: ['last 24h', 'last 7 days', 'last 30 days', 'all'] }, tags: { type: 'array', items: { type: 'string' } }, outcome: { type: 'string', enum: ['success', 'failure', 'partial'] }, limit: { type: 'number' } } } },
+  { name: 'timeline_recent', description: 'Get recent timeline events. Use at session start to see what was done recently.', inputSchema: { type: 'object', properties: { limit: { type: 'number' } } } },
+  { name: 'file_note_add', description: 'Add note to a file. Use to remember warnings, learnings, TODOs about specific files. Category: info/warning/todo/learned.', inputSchema: { type: 'object', required: ['filepath', 'note', 'category'], properties: { filepath: { type: 'string' }, note: { type: 'string' }, category: { type: 'string', enum: ['info', 'warning', 'todo', 'learned'] } } } },
+  { name: 'file_note_get', description: 'Get all notes for a file. Use AUTOMATICALLY when opening a file to see important information.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
+  { name: 'file_note_search', description: 'Search across all file notes. Use to find relevant notes across the codebase.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, limit: { type: 'number' } } } },
+  { name: 'fact_add', description: 'Add important fact about the project. Use for critical knowledge (architecture, security, business rules) that should be remembered.', inputSchema: { type: 'object', required: ['fact', 'category', 'importance'], properties: { fact: { type: 'string' }, category: { type: 'string', enum: ['architecture', 'security', 'business', 'technical'] }, importance: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] } } } },
+  { name: 'fact_search', description: 'Search important facts. Use before making decisions to recall relevant knowledge.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, minImportance: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] }, limit: { type: 'number' } } } },
+  { name: 'fact_list', description: 'List important facts. Use at session start to load critical knowledge.', inputSchema: { type: 'object', properties: { category: { type: 'string', enum: ['architecture', 'security', 'business', 'technical'] }, importance: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] }, limit: { type: 'number' } } } },
+  { name: 'memory_system_stats', description: 'Get statistics about all memory systems (timeline, file notes, facts).', inputSchema: { type: 'object', properties: {} } },
   // ── Audit (8) ─────────────────────────────────────────────────────────────
   { name: 'audit_file', description: 'Use when user says "review this file", "check for issues", "is this secure", or after writing new code to validate it. Runs OWASP + complexity + quality checks.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
   { name: 'audit_diff', description: 'Use automatically before every commit or when user says "check my changes", "review what I wrote". Audits all uncommitted git changes.', inputSchema: { type: 'object', properties: { staged: { type: 'boolean' } } } },
@@ -368,6 +381,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           break;
         }
       }
+    }
+
+    // ── Enhanced Memory tools ─────────────────────────────────────────────────
+    else if (['timeline_add', 'timeline_search', 'timeline_recent', 'file_note_add', 'file_note_get', 'file_note_search', 'fact_add', 'fact_search', 'fact_list', 'memory_system_stats'].includes(name)) {
+      const tool = memoryTools.find(t => t.name === name);
+      if (!tool) throw new Error(`Memory tool not found: ${name}`);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const result = await tool.handler(args as any, AUDIT_DATA_DIR);
+      text = result.content[0].text;
     }
 
     // ── Audit tools ───────────────────────────────────────────────────────────

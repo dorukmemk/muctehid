@@ -95,3 +95,57 @@ impact({ target: "useLiveTranscript", direction: "upstream" })
 ## [1.x.x] - Previous Versions
 
 See git history for previous releases.
+
+
+## [2.1.0] - 2024-03-28
+
+### Added - Enhanced Memory System (3-Layer)
+
+#### Timeline Memory (Episodic)
+- `timeline_add` — Track every action with timestamps, context, files, outcome, tags
+- `timeline_search` — Search past events with time range, tags, outcome filters
+- `timeline_recent` — Get recent N events
+
+**Use case:** Learn from history, recall how similar problems were solved
+
+#### File Notes (Semantic)
+- `file_note_add` — Add notes to files (info/warning/todo/learned)
+- `file_note_get` — Get all notes for a specific file
+- `file_note_search` — Semantic search across all file notes
+
+**Use case:** Remember warnings, learnings, TODOs about specific files
+
+#### Important Facts (Declarative)
+- `fact_add` — Add critical knowledge (architecture/security/business/technical)
+- `fact_search` — Semantic search with importance filtering
+- `fact_list` — List facts by category/importance
+
+**Use case:** Store and recall critical project knowledge
+
+#### Memory Stats
+- `memory_system_stats` — Get statistics about all memory systems
+
+### Technical Details
+- SQLite-based storage for all memory systems
+- Vector embeddings for semantic search (using @xenova/transformers)
+- Confidence scoring for search results
+- Use count tracking for facts
+- Timestamp tracking for all entries
+
+### Files Added
+- `src/lib/memory/timeline-memory.ts` — Timeline memory implementation
+- `src/lib/memory/file-notes.ts` — File notes implementation
+- `src/lib/memory/important-facts.ts` — Important facts implementation
+- `src/lib/memory/memory-manager.ts` — Unified memory interface
+- `src/tools/memory-tools.ts` — 10 new MCP tools
+
+### Documentation
+- Updated `AGENTS.md` with memory system usage guide
+- Added usage examples and best practices
+- Documented auto-integration points (future work)
+
+### Future Enhancements
+- Auto-logging: PostToolUse hook → timeline_add
+- Auto-context: get_context → file_note_get
+- Session start: fact_list → show top 5 facts
+- Memory cleanup: Prune old timeline events
