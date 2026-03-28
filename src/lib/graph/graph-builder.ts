@@ -43,7 +43,10 @@ export class GraphBuilder {
 
     console.log(`[GraphBuilder] Found ${files.length} files to process`);
 
-    // Process files
+    // TWO-PASS APPROACH
+    // Pass 1: Create all symbols first
+    const parseResults: ParseResult[] = [];
+    
     for (const file of files) {
       try {
         const content = fs.readFileSync(file, 'utf-8');
@@ -55,15 +58,18 @@ export class GraphBuilder {
         if (['.ts', '.tsx'].includes(ext)) {
           result = this.tsParser.parse(file, content);
         } else if (['.js', '.jsx'].includes(ext)) {
-          // Use TypeScript parser for JavaScript too (it handles both)
           result = this.tsParser.parse(file, content);
         }
 
         if (result) {
-          await this.buildFromParseResult(result);
+          // Create symbols only
+          for (const symbol of result.symbols) {
+            await this.store.createSymbol(symbol);
+            stats.symbolsCreated++;
+          }
+          
+          parseResults.push(result);
           stats.filesProcessed++;
-          stats.symbolsCreated += result.symbols.length;
-          stats.relationsCreated += result.relations.length;
         }
       } catch (error) {
         console.error(`[GraphBuilder] Error processing ${file}:`, error);
@@ -71,6 +77,27 @@ export class GraphBuilder {
       }
     }
 
+    console.log(`[GraphBuilder] Pass 1 complete: ${stats.symbolsCreated} symbols created`);
+
+    // Pass 2: Create all relations (now all symbols exist)
+    for (const result of parseResults) {
+      for (const relation of result.relations) {
+        try {
+          await this.store.createRelation(
+            relation.from,
+            relation.to,
+            relation.type,
+            relation.confidence
+          );
+          stats.relationsCreated++;
+        } catch (error) {
+          // Log but don't fail
+          // console.warn(`[GraphBuilder] Relation error: ${relation.from} -> ${relation.to}`);
+        }
+      }
+    }
+
+    console.log(`[GraphBuilder] Pass 2 complete: ${stats.relationsCreated} relations created`);
     console.log(`[GraphBuilder] Build complete:`, stats);
     return stats;
   }

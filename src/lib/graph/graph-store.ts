@@ -121,14 +121,41 @@ export class GraphStore {
   }
 
   async createRelation(from: string, to: string, type: RelationType, confidence: number = 1.0): Promise<void> {
+    // Check if both symbols exist first
+    const fromExists = this.db.prepare('SELECT 1 FROM symbols WHERE uid = ?').get(from);
+    const toExists = this.db.prepare('SELECT 1 FROM symbols WHERE uid = ?').get(to);
+    
+    if (!fromExists || !toExists) {
+      // Skip if either symbol doesn't exist (cross-file reference not yet indexed)
+      return;
+    }
+
+    // Check for duplicate
+    const existing = this.db.prepare(`
+      SELECT 1 FROM relations 
+      WHERE fromUid = ? AND toUid = ? AND type = ?
+    `).get(from, to, type);
+    
+    if (existing) {
+      // Update confidence if higher
+      this.db.prepare(`
+        UPDATE relations 
+        SET confidence = MAX(confidence, ?)
+        WHERE fromUid = ? AND toUid = ? AND type = ?
+      `).run(confidence, from, to, type);
+      return;
+    }
+
+    // Insert new relation
     const stmt = this.db.prepare(`
       INSERT INTO relations (fromUid, toUid, type, confidence)
       VALUES (?, ?, ?, ?)
     `);
     try {
       stmt.run(from, to, type, confidence);
-    } catch {
-      // Ignore duplicate or foreign key errors
+    } catch (error) {
+      // Log error for debugging
+      console.warn(`[GraphStore] Failed to create relation ${from} -> ${to}:`, error);
     }
   }
 

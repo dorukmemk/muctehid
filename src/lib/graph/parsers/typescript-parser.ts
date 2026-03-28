@@ -16,6 +16,22 @@ export class TypeScriptParser {
     this.parser.setLanguage(TypeScript.typescript);
   }
 
+  private resolveImportPath(currentFile: string, importPath: string): string {
+    // Handle relative imports
+    if (importPath.startsWith('.')) {
+      const currentDir = path.dirname(currentFile);
+      const resolved = path.resolve(currentDir, importPath);
+      // Try common extensions
+      for (const ext of ['.ts', '.tsx', '.js', '.jsx', '/index.ts', '/index.tsx']) {
+        const withExt = resolved + ext;
+        if (withExt) return withExt;
+      }
+      return resolved + '.ts'; // Default
+    }
+    // Node modules or absolute imports
+    return importPath;
+  }
+
   parse(filepath: string, content: string): ParseResult {
     const tree = this.parser.parse(content);
     const symbols: SymbolNode[] = [];
@@ -39,6 +55,58 @@ export class TypeScriptParser {
 
           // Find function calls inside
           this.extractCalls(node, uid, relations, imports, filepath);
+        }
+      }
+
+      // Arrow functions assigned to variables/constants
+      else if (node.type === 'lexical_declaration' || node.type === 'variable_declaration') {
+        for (const child of node.children) {
+          if (child.type === 'variable_declarator') {
+            const nameNode = child.childForFieldName('name');
+            const valueNode = child.childForFieldName('value');
+            
+            if (nameNode && valueNode && (valueNode.type === 'arrow_function' || valueNode.type === 'function')) {
+              const uid = `${filepath}:${nameNode.text}:${child.startPosition.row}`;
+              symbols.push({
+                uid,
+                name: nameNode.text,
+                kind: 'Function',
+                filepath,
+                startLine: child.startPosition.row + 1,
+                endLine: child.endPosition.row + 1,
+              });
+
+              // Extract calls from arrow function body
+              this.extractCalls(valueNode, uid, relations, imports, filepath);
+            }
+          }
+        }
+      }
+
+      // Export assignments (React hooks pattern: export const useX = () => {})
+      else if (node.type === 'export_statement') {
+        const declarationNode = node.childForFieldName('declaration');
+        if (declarationNode && (declarationNode.type === 'lexical_declaration' || declarationNode.type === 'variable_declaration')) {
+          for (const child of declarationNode.children) {
+            if (child.type === 'variable_declarator') {
+              const nameNode = child.childForFieldName('name');
+              const valueNode = child.childForFieldName('value');
+              
+              if (nameNode && valueNode && (valueNode.type === 'arrow_function' || valueNode.type === 'function')) {
+                const uid = `${filepath}:${nameNode.text}:${child.startPosition.row}`;
+                symbols.push({
+                  uid,
+                  name: nameNode.text,
+                  kind: 'Function',
+                  filepath,
+                  startLine: child.startPosition.row + 1,
+                  endLine: child.endPosition.row + 1,
+                });
+
+                this.extractCalls(valueNode, uid, relations, imports, filepath);
+              }
+            }
+          }
         }
       }
 
@@ -146,7 +214,7 @@ export class TypeScriptParser {
         if (clauseNode && sourceNode) {
           const sourcePath = sourceNode.text.replace(/['"]/g, '');
           
-          // Named imports
+          // Named imports: import { X, Y as Z } from './module'
           if (clauseNode.type === 'named_imports') {
             for (const child of clauseNode.children) {
               if (child.type === 'import_specifier') {
@@ -155,17 +223,29 @@ export class TypeScriptParser {
                 const importedName = nameNode?.text ?? '';
                 const localName = aliasNode?.text ?? importedName;
                 
-                // Store import mapping
-                const importedUid = `${sourcePath}:${importedName}:0`;
+                // Resolve relative paths
+                const resolvedPath = this.resolveImportPath(filepath, sourcePath);
+                const importedUid = `${resolvedPath}:${importedName}:0`;
                 imports.set(localName, importedUid);
               }
             }
           }
-          // Default import
+          // Default import: import X from './module'
           else if (clauseNode.type === 'identifier') {
             const localName = clauseNode.text;
-            const importedUid = `${sourcePath}:default:0`;
+            const resolvedPath = this.resolveImportPath(filepath, sourcePath);
+            const importedUid = `${resolvedPath}:default:0`;
             imports.set(localName, importedUid);
+          }
+          // Namespace import: import * as X from './module'
+          else if (clauseNode.type === 'namespace_import') {
+            const nameNode = clauseNode.childForFieldName('name');
+            if (nameNode) {
+              const localName = nameNode.text;
+              const resolvedPath = this.resolveImportPath(filepath, sourcePath);
+              const importedUid = `${resolvedPath}:*:0`;
+              imports.set(localName, importedUid);
+            }
           }
         }
       }
@@ -189,6 +269,7 @@ export class TypeScriptParser {
     filepath: string
   ): void {
     const visit = (n: Parser.SyntaxNode) => {
+      // Regular function calls: foo()
       if (n.type === 'call_expression') {
         const functionNode = n.childForFieldName('function');
         if (functionNode) {
@@ -217,6 +298,48 @@ export class TypeScriptParser {
               type: 'CALLS',
               confidence,
             });
+          }
+        }
+      }
+
+      // JSX elements: <Component />
+      else if (n.type === 'jsx_element' || n.type === 'jsx_self_closing_element') {
+        const nameNode = n.type === 'jsx_element' 
+          ? n.childForFieldName('open_tag')?.childForFieldName('name')
+          : n.childForFieldName('name');
+        
+        if (nameNode) {
+          const componentName = nameNode.text;
+          // Only track custom components (PascalCase)
+          if (componentName && /^[A-Z]/.test(componentName)) {
+            const calleeUid = imports.get(componentName) ?? `${filepath}:${componentName}:0`;
+            relations.push({
+              from: callerUid,
+              to: calleeUid,
+              type: 'CALLS',
+              confidence: 0.85, // JSX usage is pretty reliable
+            });
+          }
+        }
+      }
+
+      // Hook calls: const [state, setState] = useState()
+      else if (n.type === 'variable_declarator') {
+        const valueNode = n.childForFieldName('value');
+        if (valueNode && valueNode.type === 'call_expression') {
+          const functionNode = valueNode.childForFieldName('function');
+          if (functionNode && functionNode.type === 'identifier') {
+            const hookName = functionNode.text;
+            // React hooks pattern
+            if (hookName.startsWith('use')) {
+              const calleeUid = imports.get(hookName) ?? `${filepath}:${hookName}:0`;
+              relations.push({
+                from: callerUid,
+                to: calleeUid,
+                type: 'CALLS',
+                confidence: 0.9,
+              });
+            }
           }
         }
       }
