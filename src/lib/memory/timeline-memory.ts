@@ -97,8 +97,17 @@ export class TimelineMemory {
     const params: any[] = [minTimestamp];
 
     if (query) {
-      sql += ' AND (action LIKE ? OR context LIKE ?)';
-      params.push(`%${query}%`, `%${query}%`);
+      // Split query into words and match each word independently (AND logic)
+      const words = query.trim().split(/\s+/).filter(w => w.length > 0);
+      if (words.length === 1) {
+        sql += ' AND (action LIKE ? OR context LIKE ?)';
+        params.push(`%${words[0]}%`, `%${words[0]}%`);
+      } else {
+        // Each word must appear somewhere in action OR context
+        const wordConditions = words.map(() => '(action LIKE ? OR context LIKE ?)').join(' AND ');
+        sql += ` AND (${wordConditions})`;
+        words.forEach(w => params.push(`%${w}%`, `%${w}%`));
+      }
     }
 
     if (outcome) {

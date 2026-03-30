@@ -331,8 +331,8 @@ export const factListTool = {
 // ============================================================================
 
 export const memoryStatsTool = {
-  name: 'memory_stats',
-  description: 'Get statistics about all memory systems. Use this to understand memory usage.',
+  name: 'memory_system_stats',
+  description: 'Get statistics about all memory systems (timeline, file notes, facts). Use this to understand memory usage.',
   inputSchema: z.object({}),
   handler: async (_args: Record<string, never>, dataDir: string) => {
     const memory = getMemoryManager(dataDir);
