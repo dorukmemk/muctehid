@@ -186,6 +186,13 @@ const TOOLS = [
     { name: 'session_briefing', description: 'Get full session briefing: top facts, recent activity, open TODOs, warnings, memory stats. Use at START of every session instead of separate fact_list + timeline_recent calls.', inputSchema: { type: 'object', properties: {} } },
     { name: 'working_memory', description: 'Manage what you are doing RIGHT NOW. Set goals, track active task, leave breadcrumbs, detect goal drift. Actions: set_goal, set_task, clear_task, breadcrumb, status, reset.', inputSchema: { type: 'object', required: ['action'], properties: { action: { type: 'string', enum: ['set_goal', 'set_task', 'clear_task', 'breadcrumb', 'status', 'reset'] }, value: { type: 'string' }, taskId: { type: 'string' }, file: { type: 'string' } } } },
     { name: 'decide', description: 'Record a decision with reasoning and alternatives. Builds decision history so you can recall WHY something was done. Use when making architectural or implementation choices.', inputSchema: { type: 'object', required: ['what', 'why'], properties: { what: { type: 'string' }, why: { type: 'string' }, alternatives: { type: 'array', items: { type: 'string' } } } } },
+    // ── Memory Maintenance (3) ────────────────────────────────────────────────
+    { name: 'memory_consolidate', description: 'Consolidate old timeline events into summaries. Reduces noise. Run at session end or periodically.', inputSchema: { type: 'object', properties: { olderThanDays: { type: 'number' } } } },
+    { name: 'memory_decay', description: 'Archive/delete very old events. Keeps memory lean. Run monthly.', inputSchema: { type: 'object', properties: { olderThanDays: { type: 'number' } } } },
+    { name: 'learn_patterns', description: 'Detect failure patterns and frequent action patterns from timeline history. Helps avoid repeating mistakes.', inputSchema: { type: 'object', properties: { type: { type: 'string', enum: ['failures', 'frequent', 'both'] } } } },
+    // ── Cross-Project Memory (2) ──────────────────────────────────────────────
+    { name: 'global_learn', description: 'Save a pattern or learning to global cross-project memory. Persists across ALL projects.', inputSchema: { type: 'object', required: ['type', 'content'], properties: { type: { type: 'string', enum: ['pattern', 'learning'] }, content: { type: 'string' }, description: { type: 'string' }, category: { type: 'string' } } } },
+    { name: 'global_recall', description: 'Search cross-project memory for patterns and learnings from other projects.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, type: { type: 'string', enum: ['patterns', 'learnings', 'both'] } } } },
     // ── Audit (8) ─────────────────────────────────────────────────────────────
     { name: 'audit_file', description: 'Use when user says "review this file", "check for issues", "is this secure", or after writing new code to validate it. Runs OWASP + complexity + quality checks.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
     { name: 'audit_diff', description: 'Use automatically before every commit or when user says "check my changes", "review what I wrote". Audits all uncommitted git changes.', inputSchema: { type: 'object', properties: { staged: { type: 'boolean' } } } },
@@ -401,7 +408,7 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
             }
         }
         // ── Enhanced Memory tools ─────────────────────────────────────────────────
-        else if (['timeline_add', 'timeline_search', 'timeline_recent', 'file_note_add', 'file_note_get', 'file_note_search', 'fact_add', 'fact_search', 'fact_list', 'memory_system_stats', 'think', 'predict_change', 'recall_experience', 'session_briefing', 'working_memory', 'decide'].includes(name)) {
+        else if (['timeline_add', 'timeline_search', 'timeline_recent', 'file_note_add', 'file_note_get', 'file_note_search', 'fact_add', 'fact_search', 'fact_list', 'memory_system_stats', 'think', 'predict_change', 'recall_experience', 'session_briefing', 'working_memory', 'decide', 'memory_consolidate', 'memory_decay', 'learn_patterns', 'global_learn', 'global_recall'].includes(name)) {
             const tool = memory_tools_js_1.memoryTools.find(t => t.name === name);
             if (!tool)
                 throw new Error(`Memory tool not found: ${name}`);

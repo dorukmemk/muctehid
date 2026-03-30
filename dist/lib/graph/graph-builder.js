@@ -35,16 +35,20 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.GraphBuilder = void 0;
 const typescript_parser_js_1 = require("./parsers/typescript-parser.js");
+const python_parser_js_1 = require("./parsers/python-parser.js");
+const path = __importStar(require("path"));
 const fs = __importStar(require("fs"));
 const glob_1 = require("glob");
 class GraphBuilder {
     store;
     tsParser;
+    pyParser;
     constructor(store) {
         this.store = store;
         this.tsParser = new typescript_parser_js_1.TypeScriptParser();
+        this.pyParser = new python_parser_js_1.PythonParser();
     }
-    async buildFromDirectory(dirPath, extensions = ['.ts', '.tsx', '.js', '.jsx']) {
+    async buildFromDirectory(dirPath, extensions = ['.ts', '.tsx', '.js', '.jsx', '.py']) {
         const stats = {
             filesProcessed: 0,
             symbolsCreated: 0,
@@ -69,7 +73,14 @@ class GraphBuilder {
         for (const file of files) {
             try {
                 const content = fs.readFileSync(file, 'utf-8');
-                const result = this.tsParser.parse(file, content);
+                const ext = path.extname(file);
+                let result;
+                if (['.py'].includes(ext)) {
+                    result = await this.pyParser.parse(file, content);
+                }
+                else {
+                    result = this.tsParser.parse(file, content);
+                }
                 for (const symbol of result.symbols) {
                     await this.store.createSymbol(symbol);
                     stats.symbolsCreated++;

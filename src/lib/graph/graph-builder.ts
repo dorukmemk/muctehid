@@ -1,5 +1,6 @@
 import { GraphStore, SymbolNode } from './graph-store.js';
 import { TypeScriptParser, ParseResult, RawRelation } from './parsers/typescript-parser.js';
+import { PythonParser } from './parsers/python-parser.js';
 import * as path from 'path';
 import * as fs from 'fs';
 import { glob } from 'glob';
@@ -15,15 +16,17 @@ export interface BuildStats {
 export class GraphBuilder {
   private store: GraphStore;
   private tsParser: TypeScriptParser;
+  private pyParser: PythonParser;
 
   constructor(store: GraphStore) {
     this.store = store;
     this.tsParser = new TypeScriptParser();
+    this.pyParser = new PythonParser();
   }
 
   async buildFromDirectory(
     dirPath: string,
-    extensions: string[] = ['.ts', '.tsx', '.js', '.jsx']
+    extensions: string[] = ['.ts', '.tsx', '.js', '.jsx', '.py']
   ): Promise<BuildStats> {
     const stats: BuildStats = {
       filesProcessed: 0,
@@ -53,7 +56,14 @@ export class GraphBuilder {
     for (const file of files) {
       try {
         const content = fs.readFileSync(file, 'utf-8');
-        const result = this.tsParser.parse(file, content);
+        const ext = path.extname(file);
+        let result: ParseResult;
+
+        if (['.py'].includes(ext)) {
+          result = await this.pyParser.parse(file, content);
+        } else {
+          result = this.tsParser.parse(file, content);
+        }
 
         for (const symbol of result.symbols) {
           await this.store.createSymbol(symbol);

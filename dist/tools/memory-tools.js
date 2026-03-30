@@ -2,11 +2,46 @@
 /**
  * Memory Tools — Timeline, File Notes, Important Facts, Cognitive Engine
  */
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.memoryTools = exports.decideTool = exports.workingMemoryTool = exports.sessionBriefingTool = exports.recallExperienceTool = exports.predictChangeTool = exports.thinkTool = exports.memoryStatsTool = exports.factListTool = exports.factSearchTool = exports.factAddTool = exports.fileNoteSearchTool = exports.fileNoteGetTool = exports.fileNoteAddTool = exports.timelineRecentTool = exports.timelineSearchTool = exports.timelineAddTool = void 0;
+exports.memoryTools = exports.globalRecallTool = exports.globalLearnTool = exports.learnPatternsTool = exports.memoryDecayTool = exports.consolidateTool = exports.decideTool = exports.workingMemoryTool = exports.sessionBriefingTool = exports.recallExperienceTool = exports.predictChangeTool = exports.thinkTool = exports.memoryStatsTool = exports.factListTool = exports.factSearchTool = exports.factAddTool = exports.fileNoteSearchTool = exports.fileNoteGetTool = exports.fileNoteAddTool = exports.timelineRecentTool = exports.timelineSearchTool = exports.timelineAddTool = void 0;
 exports.setMemoryDeps = setMemoryDeps;
 const zod_1 = require("zod");
+const path = __importStar(require("path"));
 const memory_manager_js_1 = require("../lib/memory/memory-manager.js");
+const cross_project_js_1 = require("../lib/memory/cross-project.js");
 let memoryManager = null;
 let _graphStore = null;
 let _repoRoot = process.cwd();
@@ -446,6 +481,124 @@ exports.decideTool = {
         return { content: [{ type: 'text', text: `🧠 Decision recorded: ${args.what}\nReason: ${args.why}` }] };
     },
 };
+exports.consolidateTool = {
+    name: 'memory_consolidate',
+    description: 'Consolidate old timeline events into summaries. Reduces noise, keeps memory efficient. Run periodically or at session end.',
+    inputSchema: zod_1.z.object({
+        olderThanDays: zod_1.z.number().optional().describe('Consolidate events older than N days (default: 7)'),
+    }),
+    handler: async (args, dataDir) => {
+        const memory = getMemoryManager(dataDir);
+        const result = memory.timeline.consolidate(args.olderThanDays);
+        return { content: [{ type: 'text', text: JSON.stringify({ message: 'Memory consolidated', ...result }, null, 2) }] };
+    },
+};
+exports.memoryDecayTool = {
+    name: 'memory_decay',
+    description: 'Archive/delete very old events. Keeps memory lean. Run monthly.',
+    inputSchema: zod_1.z.object({
+        olderThanDays: zod_1.z.number().optional().describe('Delete events older than N days (default: 90)'),
+    }),
+    handler: async (args, dataDir) => {
+        const memory = getMemoryManager(dataDir);
+        const result = memory.timeline.decay(args.olderThanDays);
+        return { content: [{ type: 'text', text: JSON.stringify({ message: 'Memory decay complete', ...result }, null, 2) }] };
+    },
+};
+exports.learnPatternsTool = {
+    name: 'learn_patterns',
+    description: 'Detect failure patterns and frequent action patterns from timeline. Helps avoid repeating mistakes.',
+    inputSchema: zod_1.z.object({
+        type: zod_1.z.enum(['failures', 'frequent', 'both']).optional().describe('Pattern type to detect (default: both)'),
+    }),
+    handler: async (args, dataDir) => {
+        const memory = getMemoryManager(dataDir);
+        const t = args.type ?? 'both';
+        const parts = [];
+        if (t === 'failures' || t === 'both') {
+            const failures = memory.timeline.detectFailurePatterns();
+            if (failures.length > 0) {
+                parts.push('## Failure Patterns');
+                for (const f of failures) {
+                    parts.push(`- ${f.file}: ${f.failureCount} failures. Actions: ${f.commonActions.join(', ')}`);
+                }
+            }
+            else {
+                parts.push('## No failure patterns detected');
+            }
+        }
+        if (t === 'frequent' || t === 'both') {
+            const frequent = memory.timeline.detectFrequentPatterns();
+            if (frequent.length > 0) {
+                parts.push('\n## Frequent Patterns');
+                for (const f of frequent) {
+                    parts.push(`- "${f.action}" (${f.count}x, ${f.avgOutcome})`);
+                }
+            }
+        }
+        return { content: [{ type: 'text', text: parts.join('\n') || 'No patterns detected.' }] };
+    },
+};
+let crossProjectMemory = null;
+function getCrossProject() {
+    if (!crossProjectMemory)
+        crossProjectMemory = new cross_project_js_1.CrossProjectMemory();
+    return crossProjectMemory;
+}
+exports.globalLearnTool = {
+    name: 'global_learn',
+    description: 'Save a learning or pattern to global cross-project memory. Persists across all projects.',
+    inputSchema: zod_1.z.object({
+        type: zod_1.z.enum(['pattern', 'learning']).describe('Type of knowledge'),
+        content: zod_1.z.string().describe('The pattern or learning'),
+        description: zod_1.z.string().optional().describe('Description (for patterns)'),
+        category: zod_1.z.string().optional().describe('Category (for patterns): coding, architecture, debugging, testing'),
+    }),
+    handler: async (args, _dataDir) => {
+        const cp = getCrossProject();
+        const project = path.basename(_repoRoot);
+        let id;
+        if (args.type === 'pattern') {
+            id = cp.addPattern(args.content, args.description ?? args.content, args.category ?? 'coding', project);
+        }
+        else {
+            id = cp.addLearning(args.content, args.description, project);
+        }
+        return { content: [{ type: 'text', text: `Global ${args.type} saved: ${id}` }] };
+    },
+};
+exports.globalRecallTool = {
+    name: 'global_recall',
+    description: 'Search cross-project memory for patterns and learnings from other projects.',
+    inputSchema: zod_1.z.object({
+        query: zod_1.z.string().describe('Search query'),
+        type: zod_1.z.enum(['patterns', 'learnings', 'both']).optional().describe('What to search (default: both)'),
+    }),
+    handler: async (args, _dataDir) => {
+        const cp = getCrossProject();
+        const t = args.type ?? 'both';
+        const parts = [];
+        if (t === 'patterns' || t === 'both') {
+            const patterns = cp.searchPatterns(args.query);
+            if (patterns.length > 0) {
+                parts.push('## Global Patterns');
+                for (const p of patterns) {
+                    parts.push(`- [${p.category}] ${p.pattern}: ${p.description} (from: ${p.projectSource ?? 'unknown'}, used ${p.useCount}x)`);
+                }
+            }
+        }
+        if (t === 'learnings' || t === 'both') {
+            const learnings = cp.searchLearnings(args.query);
+            if (learnings.length > 0) {
+                parts.push('\n## Global Learnings');
+                for (const l of learnings) {
+                    parts.push(`- ${l.learning} (from: ${l.projectSource ?? 'unknown'})`);
+                }
+            }
+        }
+        return { content: [{ type: 'text', text: parts.join('\n') || 'No global memories found for: ' + args.query }] };
+    },
+};
 exports.memoryTools = [
     exports.timelineAddTool,
     exports.timelineSearchTool,
@@ -463,5 +616,10 @@ exports.memoryTools = [
     exports.sessionBriefingTool,
     exports.workingMemoryTool,
     exports.decideTool,
+    exports.consolidateTool,
+    exports.memoryDecayTool,
+    exports.learnPatternsTool,
+    exports.globalLearnTool,
+    exports.globalRecallTool,
 ];
 //# sourceMappingURL=memory-tools.js.map

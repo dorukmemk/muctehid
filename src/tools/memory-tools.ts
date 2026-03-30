@@ -3,9 +3,11 @@
  */
 
 import { z } from 'zod';
+import * as path from 'path';
 import { MemoryManager } from '../lib/memory/memory-manager.js';
 import type { TimelineSearchOptions } from '../lib/memory/timeline-memory.js';
 import { GraphStore } from '../lib/graph/graph-store.js';
+import { CrossProjectMemory, ContextOptimizer } from '../lib/memory/cross-project.js';
 
 let memoryManager: MemoryManager | null = null;
 let _graphStore: GraphStore | null = null;
@@ -501,6 +503,133 @@ export const decideTool = {
   },
 };
 
+export const consolidateTool = {
+  name: 'memory_consolidate',
+  description: 'Consolidate old timeline events into summaries. Reduces noise, keeps memory efficient. Run periodically or at session end.',
+  inputSchema: z.object({
+    olderThanDays: z.number().optional().describe('Consolidate events older than N days (default: 7)'),
+  }),
+  handler: async (args: { olderThanDays?: number }, dataDir: string) => {
+    const memory = getMemoryManager(dataDir);
+    const result = memory.timeline.consolidate(args.olderThanDays);
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ message: 'Memory consolidated', ...result }, null, 2) }] };
+  },
+};
+
+export const memoryDecayTool = {
+  name: 'memory_decay',
+  description: 'Archive/delete very old events. Keeps memory lean. Run monthly.',
+  inputSchema: z.object({
+    olderThanDays: z.number().optional().describe('Delete events older than N days (default: 90)'),
+  }),
+  handler: async (args: { olderThanDays?: number }, dataDir: string) => {
+    const memory = getMemoryManager(dataDir);
+    const result = memory.timeline.decay(args.olderThanDays);
+    return { content: [{ type: 'text' as const, text: JSON.stringify({ message: 'Memory decay complete', ...result }, null, 2) }] };
+  },
+};
+
+export const learnPatternsTool = {
+  name: 'learn_patterns',
+  description: 'Detect failure patterns and frequent action patterns from timeline. Helps avoid repeating mistakes.',
+  inputSchema: z.object({
+    type: z.enum(['failures', 'frequent', 'both']).optional().describe('Pattern type to detect (default: both)'),
+  }),
+  handler: async (args: { type?: string }, dataDir: string) => {
+    const memory = getMemoryManager(dataDir);
+    const t = args.type ?? 'both';
+    const parts: string[] = [];
+
+    if (t === 'failures' || t === 'both') {
+      const failures = memory.timeline.detectFailurePatterns();
+      if (failures.length > 0) {
+        parts.push('## Failure Patterns');
+        for (const f of failures) {
+          parts.push(`- ${f.file}: ${f.failureCount} failures. Actions: ${f.commonActions.join(', ')}`);
+        }
+      } else {
+        parts.push('## No failure patterns detected');
+      }
+    }
+
+    if (t === 'frequent' || t === 'both') {
+      const frequent = memory.timeline.detectFrequentPatterns();
+      if (frequent.length > 0) {
+        parts.push('\n## Frequent Patterns');
+        for (const f of frequent) {
+          parts.push(`- "${f.action}" (${f.count}x, ${f.avgOutcome})`);
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: parts.join('\n') || 'No patterns detected.' }] };
+  },
+};
+
+let crossProjectMemory: CrossProjectMemory | null = null;
+function getCrossProject(): CrossProjectMemory {
+  if (!crossProjectMemory) crossProjectMemory = new CrossProjectMemory();
+  return crossProjectMemory;
+}
+
+export const globalLearnTool = {
+  name: 'global_learn',
+  description: 'Save a learning or pattern to global cross-project memory. Persists across all projects.',
+  inputSchema: z.object({
+    type: z.enum(['pattern', 'learning']).describe('Type of knowledge'),
+    content: z.string().describe('The pattern or learning'),
+    description: z.string().optional().describe('Description (for patterns)'),
+    category: z.string().optional().describe('Category (for patterns): coding, architecture, debugging, testing'),
+  }),
+  handler: async (args: { type: string; content: string; description?: string; category?: string }, _dataDir: string) => {
+    const cp = getCrossProject();
+    const project = path.basename(_repoRoot);
+    let id: string;
+    if (args.type === 'pattern') {
+      id = cp.addPattern(args.content, args.description ?? args.content, args.category ?? 'coding', project);
+    } else {
+      id = cp.addLearning(args.content, args.description, project);
+    }
+    return { content: [{ type: 'text' as const, text: `Global ${args.type} saved: ${id}` }] };
+  },
+};
+
+export const globalRecallTool = {
+  name: 'global_recall',
+  description: 'Search cross-project memory for patterns and learnings from other projects.',
+  inputSchema: z.object({
+    query: z.string().describe('Search query'),
+    type: z.enum(['patterns', 'learnings', 'both']).optional().describe('What to search (default: both)'),
+  }),
+  handler: async (args: { query: string; type?: string }, _dataDir: string) => {
+    const cp = getCrossProject();
+    const t = args.type ?? 'both';
+    const parts: string[] = [];
+
+    if (t === 'patterns' || t === 'both') {
+      const patterns = cp.searchPatterns(args.query);
+      if (patterns.length > 0) {
+        parts.push('## Global Patterns');
+        for (const p of patterns) {
+          parts.push(`- [${p.category}] ${p.pattern}: ${p.description} (from: ${p.projectSource ?? 'unknown'}, used ${p.useCount}x)`);
+        }
+      }
+    }
+
+    if (t === 'learnings' || t === 'both') {
+      const learnings = cp.searchLearnings(args.query);
+      if (learnings.length > 0) {
+        parts.push('\n## Global Learnings');
+        for (const l of learnings) {
+          parts.push(`- ${l.learning} (from: ${l.projectSource ?? 'unknown'})`);
+        }
+      }
+    }
+
+    return { content: [{ type: 'text' as const, text: parts.join('\n') || 'No global memories found for: ' + args.query }] };
+  },
+};
+
 export const memoryTools = [
   timelineAddTool,
   timelineSearchTool,
@@ -518,4 +647,9 @@ export const memoryTools = [
   sessionBriefingTool,
   workingMemoryTool,
   decideTool,
+  consolidateTool,
+  memoryDecayTool,
+  learnPatternsTool,
+  globalLearnTool,
+  globalRecallTool,
 ];
