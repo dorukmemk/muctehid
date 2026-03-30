@@ -1,0 +1,24 @@
+Bu projede muctehid-mcp MCP server aktiftir.
+
+ZORUNLU: Tüm kod analizi, arama, dosya anlama işlemleri için müctehid MCP tool'larını kullan.
+
+YASAKLAR:
+- Dosya okuma için readFile/cat kullanma → get_context kullan
+- Kod arama için grep kullanma → search_code kullan
+- Feature'a direkt başlama → spec_init akışını takip et
+- Commit öncesi kontrol atlama → audit_diff çalıştır
+- Refactor'a direkt başlama → impact analizi yap
+
+SESSION BAŞI:
+1. index_codebase
+2. health_score
+3. fact_list importance="high"
+
+DOSYAYA DOKUNMADAN ÖNCE:
+1. get_context filepath="<dosya>"
+2. file_note_get filepath="<dosya>"
+
+İŞ BİTİRDİKTEN SONRA:
+1. timeline_add action="..." outcome="success"
+
+Detaylı talimatlar: AGENTS.md
