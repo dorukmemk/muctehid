@@ -1,44 +1,34 @@
 import { TimelineMemory } from './timeline-memory.js';
 import { FileNotes } from './file-notes.js';
 import { ImportantFacts } from './important-facts.js';
+import { WorkingMemory } from './working-memory.js';
+import { CognitiveEngine } from './cognitive-engine.js';
+import { GraphStore } from '../graph/graph-store.js';
 
 export class MemoryManager {
   public timeline: TimelineMemory;
   public fileNotes: FileNotes;
   public facts: ImportantFacts;
+  public working: WorkingMemory;
+  public cognitive: CognitiveEngine;
 
-  constructor(dataDir: string) {
+  constructor(dataDir: string, graphStore?: GraphStore | null, repoRoot?: string) {
     this.timeline = new TimelineMemory(dataDir);
     this.fileNotes = new FileNotes(dataDir);
     this.facts = new ImportantFacts(dataDir);
+    this.working = new WorkingMemory();
+    this.cognitive = new CognitiveEngine(
+      this.working,
+      this.timeline,
+      this.fileNotes,
+      this.facts,
+      graphStore ?? null,
+      repoRoot ?? process.cwd(),
+    );
   }
 
   async getSessionContext(): Promise<string> {
-    // Get top facts for session start
-    const topFacts = this.facts.getTopFacts(5);
-    const recentEvents = await this.timeline.recent(5);
-
-    const lines: string[] = [];
-    
-    if (topFacts.length > 0) {
-      lines.push('## 📌 Important Facts');
-      for (const fact of topFacts) {
-        const emoji = fact.importance === 'critical' ? '🔴' : fact.importance === 'high' ? '🟠' : '🟡';
-        lines.push(`${emoji} [${fact.category}] ${fact.fact}`);
-      }
-      lines.push('');
-    }
-
-    if (recentEvents.length > 0) {
-      lines.push('## 🕐 Recent Activity');
-      for (const event of recentEvents) {
-        const time = new Date(event.timestamp).toLocaleString();
-        lines.push(`- ${time}: ${event.action}`);
-      }
-      lines.push('');
-    }
-
-    return lines.join('\n');
+    return this.cognitive.getSessionBriefing();
   }
 
   close(): void {

@@ -27,20 +27,28 @@ Bu projede `muctehid-mcp` MCP server kurulu ve aktiftir.
 **Her session başında (İLK 3 TOOL ÇAĞRISI):**
 ```
 1. index_codebase          ← repo'yu indexle
-2. health_score            ← proje sağlığını gör
-3. fact_list importance="high"  ← önemli bilgileri yükle
+2. session_briefing        ← tam briefing (facts + timeline + TODOs + warnings)
+3. working_memory action="set_goal" value="<kullanıcının isteği>"
 ```
 
 **Bir dosyaya dokunmadan ÖNCE (HER SEFERINDE):**
 ```
-1. get_context filepath="<dosya>"     ← dosya bağlamını yükle
-2. file_note_get filepath="<dosya>"   ← dosya notlarını oku
+1. think filepath="<dosya>"           ← tüm bellekleri tarar (notes + timeline + graph + facts)
+2. predict_change filepath="<dosya>" description="<ne yapacaksın>"
 ```
 
 **Bir iş bitirdikten SONRA (HER SEFERINDE):**
 ```
 1. timeline_add action="..." outcome="success" files=["..."]
 2. file_note_add (eğer öğrenilen bir şey varsa, category="learned")
+3. working_memory action="breadcrumb" value="<ne yaptın>"
+```
+
+**Karar verirken:**
+```
+1. recall_experience task="<ne yapacaksın>"  ← benzer geçmiş deneyimler
+2. fact_search query="<konu>"               ← ilgili bilgiler
+3. decide what="<karar>" why="<neden>" alternatives=["<alternatif1>", "<alternatif2>"]
 ```
 
 **Feature/implement isteğinde:**
@@ -130,6 +138,16 @@ Bu projede `muctehid-mcp` MCP server kurulu ve aktiftir.
 | `graph_stats` | Graph durumu kontrolü |
 | `graph_query` | SQL veya basit Cypher sorguları |
 
+### Cognitive Tools (6) — İNSAN GİBİ DÜŞÜNME
+| Tool | Ne Zaman |
+|------|----------|
+| `think` | **ZORUNLU**: Dosya düzenlemeden ÖNCE (tüm bellekleri tarar) |
+| `predict_change` | **ZORUNLU**: Değişiklik yapmadan ÖNCE ("ne olur?" analizi) |
+| `recall_experience` | Görev başlamadan ÖNCE (benzer geçmiş deneyimler) |
+| `session_briefing` | **ZORUNLU**: Session başında (tam briefing) |
+| `working_memory` | Aktif görev/hedef takibi, breadcrumb, drift detection |
+| `decide` | Karar verirken (neden + alternatifler kaydet) |
+
 ### Research (2)
 | Tool | Ne Zaman |
 |------|----------|
@@ -150,11 +168,13 @@ Bu projede `muctehid-mcp` MCP server kurulu ve aktiftir.
 
 Her cevabından önce kendine sor:
 
-- [ ] `get_context` çağırdım mı? (dosya okumadan önce)
-- [ ] `search_code` kullandım mı? (grep/find yerine)
+- [ ] `think` çağırdım mı? (dosya düzenlemeden önce)
+- [ ] `predict_change` çağırdım mı? (değişiklik yapmadan önce)
+- [ ] `recall_experience` çağırdım mı? (görev başlamadan önce)
+- [ ] `session_briefing` çağırdım mı? (session başında)
 - [ ] `timeline_add` çağırdım mı? (iş bitirdikten sonra)
-- [ ] `file_note_get` çağırdım mı? (dosya açarken)
-- [ ] `fact_search` çağırdım mı? (karar vermeden önce)
+- [ ] `decide` çağırdım mı? (önemli karar verirken)
+- [ ] `working_memory breadcrumb` çağırdım mı? (her adımda)
 - [ ] `audit_diff` çağırdım mı? (commit öncesi)
 - [ ] `impact` çağırdım mı? (refactor öncesi)
 

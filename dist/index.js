@@ -117,6 +117,7 @@ const skillsManager = new skills_js_1.SkillsManager(skillRegistry, INSTALLED_SKI
 const gitTools = new git_js_1.GitTools(REPO_ROOT);
 const reportTools = new report_js_1.ReportTools(REPORTS_DIR, REPO_ROOT);
 const graphTools = new graph_js_1.GraphTools(AUDIT_DATA_DIR);
+(0, memory_tools_js_1.setMemoryDeps)(null, REPO_ROOT); // Graph store set later when graph_build runs
 const pluginRegistry = new registry_js_2.PluginRegistry();
 const taskStore = new task_store_js_1.TaskStore(AUDIT_DATA_DIR);
 const sessionStore = new session_store_js_1.SessionStore(AUDIT_DATA_DIR);
@@ -178,6 +179,13 @@ const TOOLS = [
     { name: 'fact_search', description: 'Search important facts. Use before making decisions to recall relevant knowledge.', inputSchema: { type: 'object', required: ['query'], properties: { query: { type: 'string' }, minImportance: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] }, limit: { type: 'number' } } } },
     { name: 'fact_list', description: 'List important facts. Use at session start to load critical knowledge.', inputSchema: { type: 'object', properties: { category: { type: 'string', enum: ['architecture', 'security', 'business', 'technical'] }, importance: { type: 'string', enum: ['low', 'medium', 'high', 'critical'] }, limit: { type: 'number' } } } },
     { name: 'memory_system_stats', description: 'Get statistics about all memory systems (timeline, file notes, facts).', inputSchema: { type: 'object', properties: {} } },
+    // ── Cognitive Tools (6) ───────────────────────────────────────────────────
+    { name: 'think', description: 'CRITICAL: Use BEFORE editing any file. Recalls everything known: file notes, recent changes, graph connections, related facts, warnings. Like a developer opening a file and remembering context.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
+    { name: 'predict_change', description: 'Use BEFORE making any significant change. Predicts impact: affected files, risk level, past failures, suggestions. Like a developer thinking "what will break if I change this?"', inputSchema: { type: 'object', required: ['filepath', 'description'], properties: { filepath: { type: 'string' }, description: { type: 'string' } } } },
+    { name: 'recall_experience', description: 'Search ALL memory layers for past experience. Returns similar past actions, related facts, file notes. Like a developer thinking "have I done something like this before?"', inputSchema: { type: 'object', required: ['task'], properties: { task: { type: 'string' } } } },
+    { name: 'session_briefing', description: 'Get full session briefing: top facts, recent activity, open TODOs, warnings, memory stats. Use at START of every session instead of separate fact_list + timeline_recent calls.', inputSchema: { type: 'object', properties: {} } },
+    { name: 'working_memory', description: 'Manage what you are doing RIGHT NOW. Set goals, track active task, leave breadcrumbs, detect goal drift. Actions: set_goal, set_task, clear_task, breadcrumb, status, reset.', inputSchema: { type: 'object', required: ['action'], properties: { action: { type: 'string', enum: ['set_goal', 'set_task', 'clear_task', 'breadcrumb', 'status', 'reset'] }, value: { type: 'string' }, taskId: { type: 'string' }, file: { type: 'string' } } } },
+    { name: 'decide', description: 'Record a decision with reasoning and alternatives. Builds decision history so you can recall WHY something was done. Use when making architectural or implementation choices.', inputSchema: { type: 'object', required: ['what', 'why'], properties: { what: { type: 'string' }, why: { type: 'string' }, alternatives: { type: 'array', items: { type: 'string' } } } } },
     // ── Audit (8) ─────────────────────────────────────────────────────────────
     { name: 'audit_file', description: 'Use when user says "review this file", "check for issues", "is this secure", or after writing new code to validate it. Runs OWASP + complexity + quality checks.', inputSchema: { type: 'object', required: ['filepath'], properties: { filepath: { type: 'string' } } } },
     { name: 'audit_diff', description: 'Use automatically before every commit or when user says "check my changes", "review what I wrote". Audits all uncommitted git changes.', inputSchema: { type: 'object', properties: { staged: { type: 'boolean' } } } },
@@ -393,7 +401,7 @@ server.setRequestHandler(types_js_1.CallToolRequestSchema, async (request) => {
             }
         }
         // ── Enhanced Memory tools ─────────────────────────────────────────────────
-        else if (['timeline_add', 'timeline_search', 'timeline_recent', 'file_note_add', 'file_note_get', 'file_note_search', 'fact_add', 'fact_search', 'fact_list', 'memory_system_stats'].includes(name)) {
+        else if (['timeline_add', 'timeline_search', 'timeline_recent', 'file_note_add', 'file_note_get', 'file_note_search', 'fact_add', 'fact_search', 'fact_list', 'memory_system_stats', 'think', 'predict_change', 'recall_experience', 'session_briefing', 'working_memory', 'decide'].includes(name)) {
             const tool = memory_tools_js_1.memoryTools.find(t => t.name === name);
             if (!tool)
                 throw new Error(`Memory tool not found: ${name}`);
