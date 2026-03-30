@@ -198,9 +198,25 @@ export class GraphStore {
   }
 
   async findSymbolsByName(name: string): Promise<SymbolNode[]> {
-    const stmt = this.db.prepare('SELECT * FROM symbols WHERE name = ?');
-    const rows = stmt.all(name) as any[];
-    return rows.map((row: any) => ({
+    // Exact match first
+    const exact = this.db.prepare('SELECT * FROM symbols WHERE name = ?').all(name) as any[];
+    if (exact.length > 0) {
+      return exact.map(this.rowToSymbol);
+    }
+
+    // Case-insensitive match
+    const caseInsensitive = this.db.prepare('SELECT * FROM symbols WHERE name = ? COLLATE NOCASE').all(name) as any[];
+    if (caseInsensitive.length > 0) {
+      return caseInsensitive.map(this.rowToSymbol);
+    }
+
+    // Partial match (name contains the search term)
+    const partial = this.db.prepare('SELECT * FROM symbols WHERE name LIKE ? COLLATE NOCASE').all(`%${name}%`) as any[];
+    return partial.map(this.rowToSymbol);
+  }
+
+  private rowToSymbol(row: any): SymbolNode {
+    return {
       uid: row.uid,
       name: row.name,
       kind: row.kind,
@@ -208,7 +224,7 @@ export class GraphStore {
       startLine: row.startLine,
       endLine: row.endLine,
       complexity: row.complexity,
-    }));
+    };
   }
 
   async upstream(target: string, maxDepth: number = 3, minConfidence: number = 0.0): Promise<TraversalResult> {

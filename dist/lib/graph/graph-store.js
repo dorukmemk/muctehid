@@ -175,9 +175,22 @@ class GraphStore {
         };
     }
     async findSymbolsByName(name) {
-        const stmt = this.db.prepare('SELECT * FROM symbols WHERE name = ?');
-        const rows = stmt.all(name);
-        return rows.map((row) => ({
+        // Exact match first
+        const exact = this.db.prepare('SELECT * FROM symbols WHERE name = ?').all(name);
+        if (exact.length > 0) {
+            return exact.map(this.rowToSymbol);
+        }
+        // Case-insensitive match
+        const caseInsensitive = this.db.prepare('SELECT * FROM symbols WHERE name = ? COLLATE NOCASE').all(name);
+        if (caseInsensitive.length > 0) {
+            return caseInsensitive.map(this.rowToSymbol);
+        }
+        // Partial match (name contains the search term)
+        const partial = this.db.prepare('SELECT * FROM symbols WHERE name LIKE ? COLLATE NOCASE').all(`%${name}%`);
+        return partial.map(this.rowToSymbol);
+    }
+    rowToSymbol(row) {
+        return {
             uid: row.uid,
             name: row.name,
             kind: row.kind,
@@ -185,7 +198,7 @@ class GraphStore {
             startLine: row.startLine,
             endLine: row.endLine,
             complexity: row.complexity,
-        }));
+        };
     }
     async upstream(target, maxDepth = 3, minConfidence = 0.0) {
         const nodes = [];
