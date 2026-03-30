@@ -149,3 +149,49 @@ See git history for previous releases.
 - Auto-context: get_context → file_note_get
 - Session start: fact_list → show top 5 facts
 - Memory cleanup: Prune old timeline events
+
+
+## [2.2.0] - 2026-03-30
+
+### Added - 6 Advanced Memory Features
+
+#### 1. Memory Consolidation (`memory_consolidate`)
+- Groups old timeline events into summaries per file
+- Prevents timeline bloat (50 events → 1 summary)
+- Configurable age threshold (default: 7 days)
+
+#### 2. Pattern Learning (`learn_patterns`)
+- Detects failure patterns: files that repeatedly cause errors
+- Detects frequent action patterns: things done repeatedly
+- Helps agent avoid repeating mistakes
+
+#### 3. Context Window Optimization (`ContextOptimizer`)
+- Relevance scoring for memory retrieval
+- Token budget management
+- Priority-based context assembly
+
+#### 4. Memory Decay (`memory_decay`)
+- Archives old unused events (90+ days)
+- Preserves consolidated summaries and failures
+- Keeps memory lean and relevant
+
+#### 5. Cross-Project Memory (`global_learn`, `global_recall`)
+- Global memory at `~/.muctehid/global-memory.db`
+- Patterns and learnings shared across all projects
+- Use count tracking for pattern relevance
+
+#### 6. Python Parser
+- Tree-sitter based Python AST parsing
+- Function, class, method, import, call detection
+- `graph_build` now supports `.py` files
+
+### Updated Documentation
+- AGENTS.md: Complete rewrite with 4-layer memory system
+- .kiro/steering/muctehid.md: Updated with cognitive tools
+- CLAUDE.md: Updated with new workflow
+- .cursorrules: Updated with new workflow
+- README.md: Added 20 new tools, Python support, cross-project memory
+
+### Tool Count
+- Memory tools: 27 (was 16)
+- Total tools: 57+ (was 57)

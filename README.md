@@ -10,6 +10,8 @@
 
 - 🔍 **Hybrid Memory** — BM25 (SQLite FTS5) + vector search, RRF fusion ile birleştirilmiş
 - 🕸️ **Knowledge Graph** — GitNexus-inspired AST-based code graph, impact analysis, blast radius
+- 🧠 **4 Katmanlı Cognitive Memory** — Working (anlık) → Timeline (kısa) → Facts/Notes (uzun) → Global (projeler arası)
+- 🤖 **İnsan Gibi Düşünme** — think, predict_change, recall_experience, decide, learn_patterns
 - 🔒 **OWASP Top 10** — 15 pattern, fix önerileriyle birlikte
 - 🕵️ **Secret Detection** — AWS, GitHub, Stripe, JWT, SSH key tespiti (regex + entropy)
 - 📊 **Health Score** — 0-100 ağırlıklı skor (security, quality, docs, tests, deps)
@@ -19,6 +21,8 @@
 - ✅ **Task Sistemi** — SQLite-backed, dependency graph, critical path
 - 🔬 **Research Engine** — anti-hallüsinasyon guard, claim verification
 - 🔧 **Git Entegrasyonu** — diff audit, blame context, pre-commit hook
+- 🐍 **Python Desteği** — Tree-sitter tabanlı Python parser (graph tools)
+- 🌍 **Cross-Project Memory** — Projeler arası öğrenim ve pattern paylaşımı
 - 🖥️ **Cross-platform** — Windows / Mac / Linux
 - ☁️ **Tamamen local** — API key yok, cloud yok, telemetry yok
 
@@ -152,7 +156,34 @@ Kiro, MCP server'ları `.kiro/settings/mcp.json` dosyasıyla yönetir.
         "verify_claim",
         "template_list",
         "template_render",
-        "template_save"
+        "template_save",
+        "timeline_add",
+        "timeline_search",
+        "timeline_recent",
+        "file_note_add",
+        "file_note_get",
+        "file_note_search",
+        "fact_add",
+        "fact_search",
+        "fact_list",
+        "memory_system_stats",
+        "think",
+        "predict_change",
+        "recall_experience",
+        "session_briefing",
+        "working_memory",
+        "decide",
+        "memory_consolidate",
+        "memory_decay",
+        "learn_patterns",
+        "global_learn",
+        "global_recall",
+        "graph_build",
+        "impact",
+        "graph_context",
+        "graph_stats",
+        "graph_query",
+        "task_board"
       ]
     }
   }
@@ -242,7 +273,37 @@ research_topic topic="authentication best practices"
 
 ---
 
-## Tools (57 — v2.0.0)
+## Tools (57+ — v2.1.0)
+
+### 🧠 Cognitive Memory (6) — YENİ
+| Tool | Açıklama |
+|------|----------|
+| `think` | Dosya hakkında tüm bellekleri tarar (notes + timeline + graph + facts) |
+| `predict_change` | "Bunu değiştirirsem ne olur?" etki analizi |
+| `recall_experience` | Benzer geçmiş deneyimleri hatırla |
+| `session_briefing` | Session başı tam briefing |
+| `working_memory` | Anlık bellek: hedef, görev, breadcrumb, drift detection |
+| `decide` | Karar kayıt (neden + alternatifler) |
+
+### 📝 Enhanced Memory (9) — YENİ
+| Tool | Açıklama |
+|------|----------|
+| `timeline_add/search/recent` | Episodic memory — her işi timestamp ile kaydet |
+| `file_note_add/get/search` | Dosya notları — warning, todo, learned |
+| `fact_add/search/list` | Bilgi bankası — architecture, security, business, technical |
+
+### 🔧 Memory Maintenance (3) — YENİ
+| Tool | Açıklama |
+|------|----------|
+| `memory_consolidate` | Eski event'leri birleştir (timeline şişmesini önle) |
+| `memory_decay` | 90+ günlük kullanılmayan event'leri temizle |
+| `learn_patterns` | Hata ve tekrar pattern'lerini tespit et |
+
+### 🌍 Cross-Project Memory (2) — YENİ
+| Tool | Açıklama |
+|------|----------|
+| `global_learn` | Projeler arası öğrenim/pattern kaydet (~/.muctehid/) |
+| `global_recall` | Diğer projelerden deneyim ara |
 
 ### 🆕 Graph / GitNexus (5)
 | Tool | Açıklama |
@@ -430,7 +491,8 @@ Repo root'una `.audit-config.json` ekle:
 | Config | `zod` | schema validation |
 | Git | `simple-git` | cross-platform |
 | **Graph** | **`better-sqlite3`** | **SQLite-based knowledge graph** |
-| **AST Parser** | **`tree-sitter`** | **TypeScript/JavaScript parsing** |
+| **AST Parser** | **`tree-sitter`** | **TypeScript/JavaScript/Python parsing** |
+| **Cross-Project** | **SQLite** | **~/.muctehid/global-memory.db** |
 
 ---
 

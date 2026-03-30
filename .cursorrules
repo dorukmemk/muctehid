@@ -1,24 +1,35 @@
-Bu projede muctehid-mcp MCP server aktiftir.
+Bu projede muctehid-mcp MCP server aktiftir (57+ tool, 4 katmanlı bellek).
 
-ZORUNLU: Tüm kod analizi, arama, dosya anlama işlemleri için müctehid MCP tool'larını kullan.
+ZORUNLU: Tüm kod analizi, arama, dosya anlama için müctehid MCP tool'larını kullan.
 
 YASAKLAR:
-- Dosya okuma için readFile/cat kullanma → get_context kullan
-- Kod arama için grep kullanma → search_code kullan
-- Feature'a direkt başlama → spec_init akışını takip et
-- Commit öncesi kontrol atlama → audit_diff çalıştır
-- Refactor'a direkt başlama → impact analizi yap
+- readFile/cat → think veya get_context kullan
+- grep → search_code kullan
+- Feature'a direkt başla → spec_init akışı
+- Commit öncesi atla → audit_diff
+- Refactor'a direkt başla → impact + predict_change
+- Karar vermeden geç → decide
 
 SESSION BAŞI:
 1. index_codebase
-2. health_score
-3. fact_list importance="high"
+2. session_briefing
+3. working_memory action="set_goal" value="<istek>"
 
 DOSYAYA DOKUNMADAN ÖNCE:
-1. get_context filepath="<dosya>"
-2. file_note_get filepath="<dosya>"
+1. think filepath="<dosya>"
+2. predict_change filepath="<dosya>" description="..."
 
 İŞ BİTİRDİKTEN SONRA:
 1. timeline_add action="..." outcome="success"
+2. working_memory action="breadcrumb" value="..."
 
-Detaylı talimatlar: AGENTS.md
+KARAR VERİRKEN:
+1. recall_experience task="..."
+2. decide what="..." why="..."
+
+SESSION SONU:
+1. learn_patterns type="both"
+2. memory_consolidate
+
+4 KATMANLI BELLEK: Working → Timeline → Facts/Notes → Global
+Detaylı: AGENTS.md

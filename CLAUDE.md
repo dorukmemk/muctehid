@@ -1,25 +1,37 @@
 # muctehid-mcp — Claude Code Talimatları
 
-Bu projede `muctehid-mcp` MCP server aktiftir. KENDİ TOOL'LARINI KULLANMA, müctehid tool'larını kullan.
+Bu projede `muctehid-mcp` MCP server aktiftir (57+ tool). KENDİ TOOL'LARINI KULLANMA.
 
 ## YASAKLAR
-- ❌ `cat`, `grep`, `find`, `ls` ile kod okuma/arama → `search_code`, `get_context` kullan
-- ❌ Dosya yapısını tahmin etme → `research_topic` kullan
-- ❌ Feature'a direkt başlama → `spec_init` akışını takip et
-- ❌ Commit öncesi kontrol atlama → `audit_diff` çalıştır
-- ❌ Refactor'a direkt başlama → `impact` analizi yap
+- ❌ `cat/grep/find/ls` → `search_code`, `think`, `get_context`
+- ❌ Dosya yapısını tahmin → `research_topic`
+- ❌ Feature'a direkt başla → `spec_init` akışı
+- ❌ Commit öncesi atla → `audit_diff`
+- ❌ Refactor'a direkt başla → `impact` + `predict_change`
+- ❌ Karar vermeden geç → `decide`
 
-## SESSION BAŞI (İLK 3 ÇAĞRI)
+## SESSION BAŞI
 1. `index_codebase`
-2. `health_score`
-3. `fact_list importance="high"`
+2. `session_briefing` ← tam briefing (facts + timeline + TODOs + warnings)
+3. `working_memory action="set_goal" value="<istek>"`
 
 ## DOSYAYA DOKUNMADAN ÖNCE
-1. `get_context filepath="<dosya>"`
-2. `file_note_get filepath="<dosya>"`
+1. `think filepath="<dosya>"` ← tüm bellekleri tarar
+2. `predict_change filepath="<dosya>" description="<ne yapacaksın>"`
 
 ## İŞ BİTİRDİKTEN SONRA
-1. `timeline_add action="..." outcome="success"`
-2. `file_note_add` (öğrenilen bilgi varsa)
+1. `timeline_add action="..." outcome="success" files=[...]`
+2. `working_memory action="breadcrumb" value="<ne yaptın>"`
+3. `file_note_add` (öğrenilen bilgi varsa, category="learned")
 
-## Detaylı talimatlar: AGENTS.md
+## KARAR VERİRKEN
+1. `recall_experience task="<konu>"`
+2. `decide what="<karar>" why="<neden>"`
+
+## SESSION SONU
+1. `learn_patterns type="both"`
+2. `memory_consolidate`
+3. `global_learn` (önemli öğrenim varsa)
+
+## 4 KATMANLI BELLEK: Working → Timeline → Facts/Notes → Global
+## Detaylı: AGENTS.md

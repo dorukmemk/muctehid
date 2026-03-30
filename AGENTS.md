@@ -7,157 +7,178 @@
 Bu projede `muctehid-mcp` MCP server kurulu ve aktiftir.
 **SEN KENDİ NATIVE TOOL'LARINI (readFile, grep, cat, find, ls) KULLANMADAN ÖNCE HER ZAMAN MÜCTEHİD TOOL'LARINI KULLANMALISIN.**
 
-### ❌ YASAKLAR — Bunları yaparsan HATALI çalışıyorsun demektir:
+### ❌ YASAKLAR
 
 | YAPMA | BUNUN YERİNE |
 |-------|-------------|
-| `readFile("src/...")` ile dosya okuma | `get_context filepath="src/..."` |
+| `readFile("src/...")` ile dosya okuma | `think filepath="src/..."` veya `get_context` |
 | `grep`, `find`, `cat` ile kod arama | `search_code query="..."` |
 | Dosya yapısını tahmin etme | `research_topic topic="..."` |
 | Kendi bilginle cevap verme | `research_topic` veya `verify_claim` |
-| Dosyayı okuyup "anladım" deme | `get_context` + `file_note_get` |
 | Feature'a direkt başlama | `spec_init` → `spec_generate` × 3 |
 | Commit öncesi kontrol atla | `audit_diff` |
-| Refactor'a direkt başlama | `impact` → `complexity_score` |
+| Refactor'a direkt başlama | `impact` → `predict_change` |
 | Sembol arama | `find_references symbol="..."` |
 | Bağımlılık kontrolü | `get_dependencies filepath="..."` |
+| Karar vermeden geçme | `decide what="..." why="..."` |
 
-### ✅ ZORUNLU AKIŞLAR
+## ✅ ZORUNLU AKIŞLAR
 
-**Her session başında (İLK 3 TOOL ÇAĞRISI):**
+### Session Başı (İLK 3 ÇAĞRI)
 ```
-1. index_codebase          ← repo'yu indexle
-2. session_briefing        ← tam briefing (facts + timeline + TODOs + warnings)
-3. working_memory action="set_goal" value="<kullanıcının isteği>"
-```
-
-**Bir dosyaya dokunmadan ÖNCE (HER SEFERINDE):**
-```
-1. think filepath="<dosya>"           ← tüm bellekleri tarar (notes + timeline + graph + facts)
-2. predict_change filepath="<dosya>" description="<ne yapacaksın>"
+1. index_codebase                    ← repo'yu indexle
+2. session_briefing                  ← tam briefing (facts + timeline + TODOs + warnings + stats)
+3. working_memory action="set_goal"  ← kullanıcının isteğini hedef olarak kaydet
 ```
 
-**Bir iş bitirdikten SONRA (HER SEFERINDE):**
+### Dosyaya Dokunmadan ÖNCE
 ```
-1. timeline_add action="..." outcome="success" files=["..."]
-2. file_note_add (eğer öğrenilen bir şey varsa, category="learned")
+1. think filepath="<dosya>"                              ← tüm bellekleri tarar
+2. predict_change filepath="<dosya>" description="..."   ← etki analizi
+```
+
+### İş Bitirdikten SONRA
+```
+1. timeline_add action="..." outcome="success" files=[...]
+2. file_note_add (öğrenilen bilgi varsa, category="learned")
 3. working_memory action="breadcrumb" value="<ne yaptın>"
 ```
 
-**Karar verirken:**
+### Karar Verirken
 ```
-1. recall_experience task="<ne yapacaksın>"  ← benzer geçmiş deneyimler
-2. fact_search query="<konu>"               ← ilgili bilgiler
-3. decide what="<karar>" why="<neden>" alternatives=["<alternatif1>", "<alternatif2>"]
-```
-
-**Feature/implement isteğinde:**
-```
-1. spec_init name="..." description="..."
-2. spec_generate specId="..." phase="requirements"
-3. spec_generate specId="..." phase="design"
-4. spec_generate specId="..." phase="tasks"
-5. task_next → sırayla çalış
+1. recall_experience task="<ne yapacaksın>"
+2. fact_search query="<konu>"
+3. decide what="<karar>" why="<neden>" alternatives=[...]
 ```
 
-**Refactor isteğinde:**
+### Feature/Implement İsteğinde
+```
+1. spec_init → spec_generate (requirements → design → tasks)
+2. task_next → sırayla çalış
+```
+
+### Refactor İsteğinde
 ```
 1. impact target="<sembol>" direction="upstream"
-2. complexity_score filepath="<dosya>"
-3. run_skill skill="refactor-planner" filepath="<dosya>"
+2. predict_change filepath="<dosya>" description="..."
+3. complexity_score filepath="<dosya>"
 ```
 
-**Commit öncesi:**
+### Commit Öncesi
 ```
 1. audit_diff
+2. memory_consolidate (opsiyonel, çok event varsa)
 ```
 
-## TOOL REFERANSI
+### Session Sonu
+```
+1. learn_patterns type="both"        ← hata/tekrar pattern'lerini tespit et
+2. memory_consolidate olderThanDays=3 ← eski event'leri birleştir
+3. global_learn (önemli öğrenim varsa)
+```
 
-### Hafıza & İndex (6)
+## TOOL REFERANSI (27 Memory + 30 Diğer = 57+ Tool)
+
+### 🧠 Cognitive Tools (6) — İNSAN GİBİ DÜŞÜNME
 | Tool | Ne Zaman |
 |------|----------|
-| `index_codebase` | Session başı, büyük değişiklik sonrası |
-| `search_code` | Kod aramadan ÖNCE (grep/find KULLANMA) |
-| `add_memory` | Önemli karar veya mimari not |
-| `get_context` | Dosyaya dokunmadan ÖNCE (readFile KULLANMA) |
-| `memory_stats` | Index durumu kontrolü |
-| `clear_memory` | Büyük değişiklik sonrası re-index |
+| `think` | **ZORUNLU**: Dosya düzenlemeden ÖNCE |
+| `predict_change` | **ZORUNLU**: Değişiklik yapmadan ÖNCE |
+| `recall_experience` | Görev başlamadan ÖNCE |
+| `session_briefing` | **ZORUNLU**: Session başında |
+| `working_memory` | Hedef/görev/breadcrumb/drift |
+| `decide` | Karar verirken (neden + alternatifler) |
 
-### Timeline Memory (3)
+### 📝 Timeline Memory (3)
 | Tool | Ne Zaman |
 |------|----------|
-| `timeline_add` | **OTOMATİK**: Her önemli işten SONRA |
+| `timeline_add` | **OTOMATİK**: Her işten SONRA |
 | `timeline_search` | "Daha önce bunu nasıl yaptık?" |
-| `timeline_recent` | Session başında son işleri gör |
+| `timeline_recent` | Son işleri gör |
 
-### File Notes (3)
+### 📎 File Notes (3)
 | Tool | Ne Zaman |
 |------|----------|
-| `file_note_add` | Refactor/fix sonrası, öğrenilen bilgi |
-| `file_note_get` | **OTOMATİK**: Dosya açarken |
+| `file_note_add` | Refactor/fix sonrası |
+| `file_note_get` | Dosya açarken |
 | `file_note_search` | Notlar arası arama |
 
-### Important Facts (3)
+### 📌 Important Facts (3)
 | Tool | Ne Zaman |
 |------|----------|
-| `fact_add` | Kritik proje bilgisi öğrenildiğinde |
+| `fact_add` | Kritik bilgi öğrenildiğinde |
 | `fact_search` | Karar vermeden ÖNCE |
-| `fact_list` | **OTOMATİK**: Session başında |
+| `fact_list` | Session başında |
 
-### Audit & Güvenlik (8)
+### 🔧 Memory Maintenance (3)
 | Tool | Ne Zaman |
 |------|----------|
-| `audit_file` | "review this", "check for issues" |
+| `memory_consolidate` | Session sonu, eski event'leri birleştir |
+| `memory_decay` | Aylık, 90+ günlük event'leri temizle |
+| `learn_patterns` | Session sonu, hata/tekrar pattern'leri |
+
+### 🌍 Cross-Project Memory (2)
+| Tool | Ne Zaman |
+|------|----------|
+| `global_learn` | Projeler arası öğrenim kaydet |
+| `global_recall` | Diğer projelerden deneyim ara |
+
+### 📊 Memory Stats (1)
+| Tool | Ne Zaman |
+|------|----------|
+| `memory_system_stats` | Bellek durumu kontrolü |
+
+### 🔍 Hafıza & İndex (6)
+| Tool | Ne Zaman |
+|------|----------|
+| `index_codebase` | Session başı |
+| `search_code` | Kod arama (grep KULLANMA) |
+| `add_memory` | Mimari not |
+| `get_context` | Dosya bağlamı |
+| `memory_stats` | Index durumu |
+| `clear_memory` | Re-index |
+
+### 🛡️ Audit & Güvenlik (8)
+| Tool | Ne Zaman |
+|------|----------|
+| `audit_file` | Dosya inceleme |
 | `audit_diff` | **ZORUNLU**: Commit öncesi |
-| `security_scan` | "is this secure?", auth/db kodu |
+| `security_scan` | Güvenlik taraması |
 | `find_secrets` | Credential kontrolü |
-| `find_todos` | "what needs to be done?" |
+| `find_todos` | TODO/FIXME bul |
 | `complexity_score` | Refactor öncesi |
 | `dependency_audit` | Paket güvenliği |
-| `health_score` | Session başı, proje durumu |
+| `health_score` | Proje sağlığı |
 
-### Spec & Task (13)
+### 📋 Spec & Task (13)
 | Tool | Ne Zaman |
 |------|----------|
-| `spec_init` | "implement X", "build Y", "add feature" |
+| `spec_init` | Feature başlat |
 | `spec_generate` | Requirements → Design → Tasks |
-| `task_create` | Bug, TODO, iş takibi |
-| `task_list` | "show tasks", "what's pending?" |
-| `task_next` | "what should I work on?" |
-| `task_update` | İş durumu güncelleme |
-| `task_progress` | Sprint/proje durumu |
-| `task_board` | Kanban görünümü |
+| `task_create/list/get/update/delete` | Görev yönetimi |
+| `task_next` | Sonraki görev |
+| `task_progress` | İlerleme |
+| `task_board` | Kanban |
 
-### Graph & Impact (5)
+### 🕸️ Graph & Impact (5)
 | Tool | Ne Zaman |
 |------|----------|
-| `graph_build` | index_codebase sonrası (buildGraph=true) |
-| `impact` | **ZORUNLU**: Refactor/rename öncesi |
-| `graph_context` | Sembol ilişkileri, call graph |
-| `graph_stats` | Graph durumu kontrolü |
-| `graph_query` | SQL veya basit Cypher sorguları |
+| `graph_build` | index_codebase sonrası |
+| `impact` | **ZORUNLU**: Refactor öncesi |
+| `graph_context` | Sembol ilişkileri |
+| `graph_stats` | Graph durumu |
+| `graph_query` | SQL/Cypher sorguları |
 
-### Cognitive Tools (6) — İNSAN GİBİ DÜŞÜNME
+### 🔬 Research (2)
 | Tool | Ne Zaman |
 |------|----------|
-| `think` | **ZORUNLU**: Dosya düzenlemeden ÖNCE (tüm bellekleri tarar) |
-| `predict_change` | **ZORUNLU**: Değişiklik yapmadan ÖNCE ("ne olur?" analizi) |
-| `recall_experience` | Görev başlamadan ÖNCE (benzer geçmiş deneyimler) |
-| `session_briefing` | **ZORUNLU**: Session başında (tam briefing) |
-| `working_memory` | Aktif görev/hedef takibi, breadcrumb, drift detection |
-| `decide` | Karar verirken (neden + alternatifler kaydet) |
+| `research_topic` | Konu araştırma |
+| `verify_claim` | İddia doğrulama |
 
-### Research (2)
+### 🎯 Skills (6)
 | Tool | Ne Zaman |
 |------|----------|
-| `research_topic` | "how does X work?" (KENDİ BİLGİNLE CEVAPLAMA) |
-| `verify_claim` | Bir iddiayı doğrulamadan ÖNCE |
-
-### Skills (6)
-| Tool | Ne Zaman |
-|------|----------|
-| `run_skill skill="security-audit"` | Güvenlik taraması |
+| `run_skill skill="security-audit"` | Güvenlik |
 | `run_skill skill="code-review"` | Kod inceleme |
 | `run_skill skill="refactor-planner"` | Refactor planı |
 | `run_skill skill="test-generator"` | Test yazma |
@@ -165,8 +186,6 @@ Bu projede `muctehid-mcp` MCP server kurulu ve aktiftir.
 | `run_skill skill="bug-reporter"` | Bug raporu |
 
 ## DOĞRULAMA KONTROL LİSTESİ
-
-Her cevabından önce kendine sor:
 
 - [ ] `think` çağırdım mı? (dosya düzenlemeden önce)
 - [ ] `predict_change` çağırdım mı? (değişiklik yapmadan önce)
@@ -177,5 +196,6 @@ Her cevabından önce kendine sor:
 - [ ] `working_memory breadcrumb` çağırdım mı? (her adımda)
 - [ ] `audit_diff` çağırdım mı? (commit öncesi)
 - [ ] `impact` çağırdım mı? (refactor öncesi)
+- [ ] `global_learn` çağırdım mı? (önemli öğrenim varsa)
 
 **Eğer bu listeden birini atladıysan, GERİ DÖN ve yap.**
