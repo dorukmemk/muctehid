@@ -199,3 +199,56 @@ Bu projede `muctehid-mcp` MCP server kurulu ve aktiftir.
 - [ ] `global_learn` çağırdım mı? (önemli öğrenim varsa)
 
 **Eğer bu listeden birini atladıysan, GERİ DÖN ve yap.**
+
+## ⚠️ KOMUT ÇALIŞTIRMA KURALLARI
+
+### Uzun Süren Komutlar (Watch/Server Mode)
+
+| Komut Tipi | YANLIŞ ❌ | DOĞRU ✅ |
+|------------|----------|---------|
+| Dev server | `executePwsh("npm run dev")` | `controlPwshProcess(action="start", command="npm run dev")` |
+| Watch mode | `executePwsh("tsc --watch")` | `controlPwshProcess(action="start", command="tsc --watch")` |
+| MCP server | `executePwsh("npm start")` | `controlPwshProcess(action="start", command="npm start")` |
+| Test watch | `executePwsh("npm test")` | `executePwsh("npm run test:run")` veya timeout ekle |
+
+### Timeout Kuralları
+
+```typescript
+// Kısa komutlar (build, lint, test) → 60 saniye timeout
+executePwsh({
+  command: "npm run build",
+  timeout: 60000
+})
+
+// Orta komutlar (install, audit) → 120 saniye timeout
+executePwsh({
+  command: "npm install",
+  timeout: 120000
+})
+
+// Uzun komutlar → controlPwshProcess kullan
+controlPwshProcess({
+  action: "start",
+  command: "npm run dev"
+})
+```
+
+### Yasaklı Komutlar (executePwsh ile)
+
+- `npm run dev` (watch mode)
+- `npm start` (server mode)
+- `tsc --watch` (watch mode)
+- `jest --watch` (watch mode)
+- `nodemon` (watch mode)
+- Herhangi bir `--watch` parametreli komut
+
+### Sorun Giderme
+
+Eğer bir komut 30+ dakika boyunca "devam ediyor" durumunda kalıyorsa:
+
+1. Komut watch/server mode'da mı? → `controlPwshProcess` kullan
+2. Timeout eklenmiş mi? → `timeout: 60000` ekle
+3. Komut çıkış kodu dönüyor mu? → Komutu kontrol et
+4. Arka planda bir şey bekliyor mu? → `listProcesses` ile kontrol et
+
+**HATIRLA: Watch mode komutları ASLA `executePwsh` ile çalıştırma!**

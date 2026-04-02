@@ -10,6 +10,12 @@ YASAKLAR:
 - Refactor'a direkt başla → impact + predict_change
 - Karar vermeden geç → decide
 
+KOMUT KURALLARI:
+- npm run dev, npm start gibi watch/server komutları → controlPwshProcess kullan (executePwsh DEĞİL)
+- Test komutları → npm run test:run (watch mode değil)
+- Build komutları → npm run build (tek seferlik)
+- Uzun süren komutlar için timeout ekle: timeout=60000 (60 saniye)
+
 SESSION BAŞI:
 1. index_codebase
 2. session_briefing

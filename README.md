@@ -556,6 +556,17 @@ export default definePlugin({
 
 ---
 
+## Sorun Giderme
+
+Yaygın sorunlar ve çözümleri için [TROUBLESHOOTING.md](TROUBLESHOOTING.md) dosyasına bakın.
+
+Özellikle:
+- Komutlar 30+ dakika boyunca takılıyorsa
+- MCP tool'ları çalışmıyorsa
+- Bellek sistemi yavaşsa
+
+---
+
 ## Lisans
 
 MIT — kişisel ve ticari kullanım serbesttir.

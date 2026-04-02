@@ -19,6 +19,21 @@ Bu projede `muctehid-mcp` MCP server aktiftir (27 bellek + 30 diğer = 57+ tool)
 9. **Karar verirken** → `recall_experience` + `decide`
 10. **Session sonunda** → `learn_patterns` + `memory_consolidate`
 
+## KOMUT KURALLARI (ÖNEMLİ!)
+
+**Watch/Server komutları için:**
+- ❌ `executePwsh("npm run dev")` → 30dk takılır
+- ✅ `controlPwshProcess(action="start", command="npm run dev")`
+
+**Timeout ekle:**
+- Build/test komutları → `timeout: 60000` (60 saniye)
+- Install komutları → `timeout: 120000` (120 saniye)
+
+**Yasaklı (executePwsh ile):**
+- `npm run dev`, `npm start` (watch/server mode)
+- `tsc --watch`, `jest --watch` (watch mode)
+- Herhangi bir `--watch` parametreli komut
+
 ## 4 Katmanlı Bellek Sistemi
 
 | Katman | Tool'lar | Süre |
